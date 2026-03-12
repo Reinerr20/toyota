@@ -15,6 +15,7 @@ from src.gps.gps_worker import GPSWorker
 
 log = logging.getLogger(__name__)
 
+
 class DrowsinessSystem:
     CONFIG_PATH = "config/detector_config.yaml"
     DB_PATH = os.getenv("CC_DB_PATH", os.path.join("data", "cc.db"))
@@ -22,17 +23,30 @@ class DrowsinessSystem:
     def __init__(self):
         self._ensure_paths()
         self.config = self._load_config()
-        sys_cfg = self.config.get('system', {})
-        self.vin = sys_cfg.get('vin', os.getenv('DS_VIN', 'VIN-0001'))
-        self.fps = float(sys_cfg.get('target_fps', 30.0))
-        self.gps_enabled = bool(sys_cfg.get('gps_enabled', True))
-        self.gps_port = sys_cfg.get('gps_port', os.getenv('DS_GPS_PORT', '/dev/ttyAMA10'))
-        self.gps_baud = int(sys_cfg.get('gps_baud', os.getenv('DS_GPS_BAUD', '115200')))
-        self.gps_vehicle_id = int(sys_cfg.get('gps_vehicle_id', os.getenv('DS_GPS_VEHICLE_ID', '999')))
+        sys_cfg = self.config.get("system", {})
+
+        self.vin = sys_cfg.get("vin", os.getenv("DS_VIN", "VIN-0001"))
+        self.fps = float(sys_cfg.get("target_fps", 30.0))
+
+        self.gps_enabled = bool(sys_cfg.get("gps_enabled", True))
+        self.gps_port = sys_cfg.get("gps_port", os.getenv("DS_GPS_PORT", "/dev/ttyAMA10"))
+        self.gps_baud = int(sys_cfg.get("gps_baud", os.getenv("DS_GPS_BAUD", "115200")))
+        self.gps_vehicle_id = int(sys_cfg.get("gps_vehicle_id", os.getenv("DS_GPS_VEHICLE_ID", "999")))
         self.gps_ws_url = sys_cfg.get(
-    'gps_ws_url',
-    os.getenv('DS_GPS_WS_URL', f'ws://203.100.57.59:3300/?vehicle_id={self.gps_vehicle_id}&device=GPS')
-)
+            "gps_ws_url",
+            os.getenv(
+                "DS_GPS_WS_URL",
+                f"ws://203.100.57.59:3300/?vehicle_id={self.gps_vehicle_id}&device=GPS"
+            ),
+        )
+
+        self.gps_worker = None
+        self.db = None
+        self.repo = None
+        self.user_manager = None
+        self.remote_worker = None
+        self.system_logger = None
+        self.camera = None
 
     def run(self):
         try:
@@ -61,13 +75,12 @@ class DrowsinessSystem:
         self.db = UnifiedDatabase(self.DB_PATH)
         self.repo = UnifiedRepository(self.db)
 
-        # 2. Services
+        # 2. Core Services
         self.user_manager = UserManager(database_file=self.DB_PATH)
         self.remote_worker = RemoteLogWorker(self.DB_PATH, os.getenv("DS_REMOTE_URL"), True)
         self.system_logger = SystemLogger(self.remote_worker, self.repo, self.vin)
 
         # 2b. GPS Worker (optional / non-fatal)
-        self.gps_worker = None
         if self.gps_enabled:
             try:
                 self.gps_worker = GPSWorker(
@@ -79,29 +92,29 @@ class DrowsinessSystem:
                 self.gps_worker.start()
                 log.info("GPS worker initialized successfully")
             except Exception as e:
-                log.warning("GPS worker failed to initialize: %s", e)
+                log.warning("GPS worker failed to initialize: %s", e, exc_info=True)
 
         # 3. Hardware
-        self.camera = Camera(source='auto', resolution=(640, 480))
+        self.camera = Camera(source="auto", resolution=(640, 480))
         if not self.camera.ready:
             raise RuntimeError("Camera failed to open")
 
     def _cleanup(self):
         log.info("Shutting down...")
 
-        if hasattr(self, 'gps_worker') and self.gps_worker:
+        if hasattr(self, "gps_worker") and self.gps_worker:
             self.gps_worker.close()
 
-        if hasattr(self, 'remote_worker') and self.remote_worker:
+        if hasattr(self, "remote_worker") and self.remote_worker:
             self.remote_worker.close()
 
-        if hasattr(self, 'db') and self.db:
+        if hasattr(self, "db") and self.db:
             self.db.close()
 
-        if hasattr(self, 'camera') and self.camera:
+        if hasattr(self, "camera") and self.camera:
             self.camera.release()
 
-    cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
 
     def _ensure_paths(self):
         Path("data").mkdir(exist_ok=True)
@@ -109,6 +122,6 @@ class DrowsinessSystem:
 
     def _load_config(self):
         if Path(self.CONFIG_PATH).exists():
-            with open(self.CONFIG_PATH) as f:
-                return yaml.safe_load(f)
+            with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
         return {}

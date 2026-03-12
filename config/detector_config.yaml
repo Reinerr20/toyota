@@ -5,6 +5,12 @@ system:
   vin: "VIN-0001"
   target_fps: 30.0
 
+  gps_enabled: true
+  gps_vehicle_id: 1210
+  gps_ws_url: "ws://203.100.57.59:3300/?vehicle_id=1210&device=GPS"
+  gps_port: "/dev/ttyAMA10"
+  gps_baud: 115200
+
 # Removed: user.swap_threshold (unused)
 # Removed: image.local_quality / image.remote_quality (not wired into SystemLogger)
 
