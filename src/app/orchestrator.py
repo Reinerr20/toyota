@@ -28,16 +28,26 @@ class DrowsinessSystem:
         self.vin = sys_cfg.get("vin", os.getenv("DS_VIN", "VIN-0001"))
         self.fps = float(sys_cfg.get("target_fps", 30.0))
 
-        self.gps_enabled = bool(sys_cfg.get("gps_enabled", True))
-        self.gps_port = sys_cfg.get("gps_port", os.getenv("DS_GPS_PORT", "/dev/ttyAMA10"))
-        self.gps_baud = int(sys_cfg.get("gps_baud", os.getenv("DS_GPS_BAUD", "115200")))
-        self.gps_vehicle_id = int(sys_cfg.get("gps_vehicle_id", os.getenv("DS_GPS_VEHICLE_ID", "999")))
-        self.gps_ws_url = sys_cfg.get(
-            "gps_ws_url",
-            os.getenv(
-                "DS_GPS_WS_URL",
-                f"ws://203.100.57.59:3300/?vehicle_id={self.gps_vehicle_id}&device=GPS"
+        # GPS config: single source of truth = YAML (with optional env override)
+        self.gps_enabled = self._to_bool(
+            os.getenv("DS_GPS_ENABLED", sys_cfg.get("gps_enabled", True))
+        )
+        self.gps_vehicle_id = str(
+            os.getenv("DS_GPS_VEHICLE_ID", sys_cfg.get("gps_vehicle_id", "1210"))
+        )
+        self.gps_ws_url = os.getenv(
+            "DS_GPS_WS_URL",
+            sys_cfg.get(
+                "gps_ws_url",
+                f"ws://203.100.57.59:3300/?vehicle_id={self.gps_vehicle_id}&device=GPS",
             ),
+        )
+        self.gps_port = os.getenv(
+            "DS_GPS_PORT",
+            sys_cfg.get("gps_port", "/dev/ttyAMA10"),
+        )
+        self.gps_baud = int(
+            os.getenv("DS_GPS_BAUD", sys_cfg.get("gps_baud", 115200))
         )
 
         self.gps_worker = None
@@ -102,16 +112,16 @@ class DrowsinessSystem:
     def _cleanup(self):
         log.info("Shutting down...")
 
-        if hasattr(self, "gps_worker") and self.gps_worker:
+        if self.gps_worker:
             self.gps_worker.close()
 
-        if hasattr(self, "remote_worker") and self.remote_worker:
+        if self.remote_worker:
             self.remote_worker.close()
 
-        if hasattr(self, "db") and self.db:
+        if self.db:
             self.db.close()
 
-        if hasattr(self, "camera") and self.camera:
+        if self.camera:
             self.camera.release()
 
         cv2.destroyAllWindows()
@@ -125,3 +135,9 @@ class DrowsinessSystem:
             with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
+
+    @staticmethod
+    def _to_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}

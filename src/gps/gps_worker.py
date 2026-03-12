@@ -13,23 +13,17 @@ class GPSWorker:
     SEND_INTERVAL = 2.0
     WS_RETRY_INTERVAL = 3.0
 
-    def __init__(
-        self,
-        vehicle_id: int = 999,
-        ws_url: str = "ws://203.100.57.59:3300/?vehicle_id=999&device=GPS",
-        port: str = "/dev/ttyAMA10",
-        baud: int = 115200,
-    ):
-        self.vehicle_id = vehicle_id
+    def __init__(self, vehicle_id: str, ws_url: str, port: str, baud: int):
+        self.vehicle_id = str(vehicle_id)
         self.ws_url = ws_url
         self.port = port
-        self.baud = baud
+        self.baud = int(baud)
 
         self._stop_event = threading.Event()
         self._thread = None
         self._ws = None
 
-        self.gps = GPSService(port=port, baud=baud)
+        self.gps = GPSService(port=self.port, baud=self.baud)
 
     def start(self):
         self.gps.connect()
@@ -61,7 +55,7 @@ class GPSWorker:
         return {
             "event": "UPDATE_LOCATION",
             "target": "DASHBOARD",
-            "vehicle_id": str(self.vehicle_id),
+            "vehicle_id": self.vehicle_id,
             "gps_lat": data["lat"],
             "gps_lng": data["lng"],
         }
@@ -73,14 +67,14 @@ class GPSWorker:
         while not self._stop_event.is_set():
             now = time.time()
 
-            # Reconnect WS if needed
+            # reconnect websocket if needed
             if self._ws is None and now - last_ws_attempt >= self.WS_RETRY_INTERVAL:
                 last_ws_attempt = now
                 self._ws = self._connect_ws()
 
             data = self.gps.read()
 
-            # Only send if GPS has valid coordinates and interval elapsed
+            # only send if valid coordinates exist
             if (
                 data
                 and data.get("lat") is not None
@@ -122,17 +116,20 @@ class GPSWorker:
 
 
 if __name__ == "__main__":
-    print("gps_worker main entered")
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    worker = GPSWorker()
-    print("worker created")
+    # standalone test only
+    worker = GPSWorker(
+        vehicle_id="1210",
+        ws_url="ws://203.100.57.59:3300/?vehicle_id=1210&device=GPS",
+        port="/dev/ttyAMA10",
+        baud=115200,
+    )
+
     worker.start()
-    print("worker started")
 
     try:
         while True:

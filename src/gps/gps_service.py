@@ -11,9 +11,9 @@ class GPSService:
     Reads GPS data from UART and parses NMEA sentences.
     """
 
-    def __init__(self, port: str = "/dev/ttyAMA10", baud: int = 115200):
+    def __init__(self, port: str, baud: int):
         self.port = port
-        self.baud = baud
+        self.baud = int(baud)
         self.serial = None
 
         self.state = {
@@ -69,5 +69,5 @@ class GPSService:
         if self.serial:
             try:
                 self.serial.close()
-            except:
+            except Exception:
                 pass
