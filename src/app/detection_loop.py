@@ -460,6 +460,7 @@ class DetectionLoop:
             perclos=dstate.get("perclos"),
             drowsy_score=dstate.get("drowsy_score"),
             score_drowsy=dstate.get("score_drowsy"),
+            debug_state=dstate,
         )
 
     def face_recognition(self, frame_rgb, display, results):

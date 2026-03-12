@@ -39,6 +39,10 @@ class DrowsinessDetector:
 
         self.dynamic_ear_thresh = float(self.cfg["ear"]["low"])
 
+        self._last_ear_raw = None
+        self._last_ear_used = None
+        self._hard_close = False
+
         self.counters = {
             "DROWSINESS": 0,
             "RECOVERY": 0,
@@ -102,6 +106,10 @@ class DrowsinessDetector:
         self._score_off_cnt = 0
         self._score_drowsy = False
 
+        self._last_ear_raw = None
+        self._last_ear_used = None
+        self._hard_close = False
+
     def detect(self, ear, mar, expression, hands_data=None, face_center=None, pitch=None):
         ear = float(ear)
         mar = float(mar)
@@ -113,6 +121,7 @@ class DrowsinessDetector:
         else:
             self._ear_ema = (1.0 - alpha) * float(self._ear_ema) + alpha * ear
         ear_used = float(self._ear_ema)
+        self._last_ear_used = ear_used
 
         self.ear_history.append(ear_used)
         self._detect_sudden_ear_drop()
@@ -137,6 +146,7 @@ class DrowsinessDetector:
 
         # Final drowsy state = (episode) OR (score) OR (hard close)
         hard_close = self.counters["EYES_CLOSED"] >= int(self.cfg["score"]["hard_close_frames"])
+        self._hard_close = bool(hard_close)
         self.states["IS_DROWSY"] = bool(self.episode["active"] or self._score_drowsy or hard_close)
         self.states["EYE_EPISODE_ACTIVE"] = bool(self.episode["active"])
 
@@ -393,14 +403,29 @@ class DrowsinessDetector:
                 ear_trend = "RISING"
 
         return {
-            "is_drowsy": self.states["IS_DROWSY"],
-            "is_yawning": self.states["IS_YAWNING"],
-            "eyes_closed": self.states["EYES_CLOSED"],
-            "eye_episode_active": bool(self.episode["active"]),
-            "blink_count": self.counters["BLINK"],
-            "ear_trend": ear_trend,
-            "perclos": float(self._perclos),
-            # NEW:
-            "drowsy_score": float(self._drowsy_score),
-            "score_drowsy": bool(self._score_drowsy),
-        }
+        "is_drowsy": self.states["IS_DROWSY"],
+        "is_yawning": self.states["IS_YAWNING"],
+        "eyes_closed": self.states["EYES_CLOSED"],
+        "eye_episode_active": bool(self.episode["active"]),
+        "blink_count": self.counters["BLINK"],
+        "ear_trend": ear_trend,
+        "perclos": float(self._perclos),
+        "drowsy_score": float(self._drowsy_score),
+        "score_drowsy": bool(self._score_drowsy),
+
+        # debug internals
+        "ear_raw": float(self._last_ear_raw) if self._last_ear_raw is not None else None,
+        "ear_used": float(self._last_ear_used) if self._last_ear_used is not None else None,
+        "hard_close": bool(self._hard_close),
+
+        "drowsiness_counter": int(self.counters["DROWSINESS"]),
+        "recovery_counter": int(self.counters["RECOVERY"]),
+        "eyes_closed_counter": int(self.counters["EYES_CLOSED"]),
+        "score_on_counter": int(self._score_on_cnt),
+        "score_off_counter": int(self._score_off_cnt),
+
+        "ear_low": float(self.cfg["ear"]["low"]),
+        "ear_high": float(self.cfg["ear"]["high"]),
+        "score_on_threshold": float(self.cfg["score"]["on_threshold"]),
+        "score_off_threshold": float(self.cfg["score"]["off_threshold"]),
+    }

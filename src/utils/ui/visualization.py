@@ -51,10 +51,10 @@ class Visualizer:
         blink_count: int,
         mouth_expression: str = "NEUTRAL",
         pose: tuple = None,
-        # hybrid-weighted diagnostics (optional)
         perclos: float = None,
         drowsy_score: float = None,
         score_drowsy: bool = None,
+        debug_state: dict = None,
     ):
         h, w, _ = image.shape
 
@@ -113,6 +113,55 @@ class Visualizer:
                 2,
             )
 
+                # --- EXTRA DEBUG (Bottom-left stack, above diagnostics) ---
+        if debug_state:
+            debug_lines = []
+
+            ear_raw = debug_state.get("ear_raw")
+            ear_used = debug_state.get("ear_used")
+            if ear_raw is not None:
+                debug_lines.append(f"EAR_raw:  {ear_raw:.3f}")
+            if ear_used is not None:
+                debug_lines.append(f"EAR_used: {ear_used:.3f}")
+
+            debug_lines.append(f"EyesClosed: {debug_state.get('eyes_closed')}")
+            debug_lines.append(f"Episode:    {debug_state.get('eye_episode_active')}")
+            debug_lines.append(f"HardClose:  {debug_state.get('hard_close')}")
+            debug_lines.append(f"ScoreLatch: {debug_state.get('score_drowsy')}")
+
+            if debug_state.get("eyes_closed_counter") is not None:
+                debug_lines.append(f"EyeCnt:     {debug_state.get('eyes_closed_counter')}")
+            if debug_state.get("drowsiness_counter") is not None:
+                debug_lines.append(f"DrowCnt:    {debug_state.get('drowsiness_counter')}")
+            if debug_state.get("recovery_counter") is not None:
+                debug_lines.append(f"RecoverCnt: {debug_state.get('recovery_counter')}")
+            if debug_state.get("score_on_counter") is not None:
+                debug_lines.append(f"ScoreOnCnt: {debug_state.get('score_on_counter')}")
+            if debug_state.get("score_off_counter") is not None:
+                debug_lines.append(f"ScoreOffCnt:{debug_state.get('score_off_counter')}")
+
+            if debug_state.get("ear_low") is not None and debug_state.get("ear_high") is not None:
+                debug_lines.append(
+                    f"EAR low/high: {debug_state.get('ear_low'):.3f}/{debug_state.get('ear_high'):.3f}"
+                )
+
+            debug_y = h - 10
+
+            for line in reversed(debug_lines):
+                (text_width, _), _ = cv2.getTextSize(line, self.FONT, 0.48, 1)
+                debug_x = w - text_width - 10
+
+                cv2.putText(
+                    image,
+                    line,
+                    (debug_x, debug_y),
+                    self.FONT,
+                    0.48,
+                    self.COLOR_WHITE,
+                    1,
+                )
+                debug_y -= 18
+        
         # --- TOP RIGHT (FPS) ---
         fps_text = f"FPS: {fps:.2f}"
         (text_width, _), _ = cv2.getTextSize(fps_text, self.FONT, 0.7, 2)
