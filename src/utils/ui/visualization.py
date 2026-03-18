@@ -113,39 +113,47 @@ class Visualizer:
                 2,
             )
 
-                # --- EXTRA DEBUG (Bottom-left stack, above diagnostics) ---
+        # --- EXTRA DEBUG (Bottom-right) ---
         if debug_state:
             debug_lines = []
 
             ear_raw = debug_state.get("ear_raw")
             ear_used = debug_state.get("ear_used")
+            dscore = debug_state.get("drowsy_score")
+            off_thr = debug_state.get("score_off_threshold")
+            on_thr = debug_state.get("score_on_threshold")
+
             if ear_raw is not None:
-                debug_lines.append(f"EAR_raw:  {ear_raw:.3f}")
+                debug_lines.append(f"EAR_raw:    {ear_raw:.3f}")
             if ear_used is not None:
-                debug_lines.append(f"EAR_used: {ear_used:.3f}")
+                debug_lines.append(f"EAR_used:   {ear_used:.3f}")
 
             debug_lines.append(f"EyesClosed: {debug_state.get('eyes_closed')}")
-            debug_lines.append(f"Episode:    {debug_state.get('eye_episode_active')}")
-            debug_lines.append(f"HardClose:  {debug_state.get('hard_close')}")
             debug_lines.append(f"ScoreLatch: {debug_state.get('score_drowsy')}")
 
-            if debug_state.get("eyes_closed_counter") is not None:
-                debug_lines.append(f"EyeCnt:     {debug_state.get('eyes_closed_counter')}")
-            if debug_state.get("drowsiness_counter") is not None:
-                debug_lines.append(f"DrowCnt:    {debug_state.get('drowsiness_counter')}")
-            if debug_state.get("recovery_counter") is not None:
-                debug_lines.append(f"RecoverCnt: {debug_state.get('recovery_counter')}")
+            if dscore is not None:
+                debug_lines.append(f"Score:      {dscore:.3f}")
+            if on_thr is not None and off_thr is not None:
+                debug_lines.append(f"On/OffThr:  {on_thr:.2f}/{off_thr:.2f}")
+
+            debug_lines.append(f"PERCLOS:    {debug_state.get('perclos', 0.0):.3f}")
+            debug_lines.append(f"P_Term:     {debug_state.get('perclos_term', 0.0):.3f}")
+            debug_lines.append(f"E_Term:     {debug_state.get('eyes_closed_term', 0.0):.3f}")
+            debug_lines.append(f"Y_Term:     {debug_state.get('yawn_term', 0.0):.3f}")
+            debug_lines.append(f"PitchTerm:  {debug_state.get('pitch_term', 0.0):.3f}")
+
             if debug_state.get("score_on_counter") is not None:
                 debug_lines.append(f"ScoreOnCnt: {debug_state.get('score_on_counter')}")
             if debug_state.get("score_off_counter") is not None:
                 debug_lines.append(f"ScoreOffCnt:{debug_state.get('score_off_counter')}")
 
-            if debug_state.get("ear_low") is not None and debug_state.get("ear_high") is not None:
-                debug_lines.append(
-                    f"EAR low/high: {debug_state.get('ear_low'):.3f}/{debug_state.get('ear_high'):.3f}"
-                )
+            debug_lines.append(f"Episode:    {debug_state.get('eye_episode_active')}")
+            debug_lines.append(f"HardClose:  {debug_state.get('hard_close')}")
+            
+            debug_lines.append(f"CurrDrowsy: {debug_state.get('is_current_drowsy')}")
+            debug_lines.append(f"Recovering: {debug_state.get('is_recovering')}")
 
-            debug_y = h - 10
+            debug_y = h - 40
 
             for line in reversed(debug_lines):
                 (text_width, _), _ = cv2.getTextSize(line, self.FONT, 0.48, 1)

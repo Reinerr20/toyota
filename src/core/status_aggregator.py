@@ -46,7 +46,7 @@ class StatusAggregator:
         drowsiness_info: Optional[Dict[str, Any]] = None,
     ) -> FinalStatus:
         # Priority 1: Drowsiness
-        if any(k in (drowsy_status or "") for k in ("DROWSY", "YAWN", "SLEEP")):
+        if drowsy_status in ("DROWSY", "RECOVERING", "YAWN", "SLEEP"):
             info = drowsiness_info or {}
             return FinalStatus(
                 label=drowsy_status,
