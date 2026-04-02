@@ -9,6 +9,14 @@ system:
 # Removed: image.local_quality / image.remote_quality (not wired into SystemLogger)
 
 detectors:
+  pose_calibration:
+    enabled: true
+    min_valid_frames: 20
+    max_pitch_std_deg: 3.0
+    max_yaw_std_deg: 4.0
+    max_roll_std_deg: 4.0
+    face_confidence_min: 0.0
+
   drowsiness:
     perclos:
       window_sec: 30

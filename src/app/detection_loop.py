@@ -20,7 +20,9 @@ from src.utils.ui.metrics_tracker import FpsTracker, RollingAverage
 from src.utils.ui.visualization import Visualizer
 from src.calibration.ratios import MAR
 from src.core.frame_processing import FrameProcessor, HandsPipeline
-from src.infrastructure.hardware.buzzer import Buzzer  
+from src.infrastructure.hardware.buzzer import Buzzer
+from src.core.head_pose_calibrator import HeadPoseCalibrator
+from src.utils.config.yaml_loader import load_yaml_section  
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +105,8 @@ class DetectionLoop:
 
         self.head_pose_estimator = HeadPoseEstimator()
         self.expression_classifier = MouthExpressionClassifier()
+        pose_calib_cfg = load_yaml_section(detector_config_path, "detectors.pose_calibration") or {}
+        self.head_pose_calibrator = HeadPoseCalibrator(pose_calib_cfg)
 
         # Hands: infer on interval; cache normalized hands
         self.hand_wrapper = HandsModel(max_num_hands=2)
@@ -153,6 +157,22 @@ class DetectionLoop:
 
     def _request_stop(self, *_args):
         self._stop_requested = True
+
+    def _reset_pose_session_state(self):
+        """
+        Reset pose estimator smoothing state + neutral calibration state.
+        Call this when active user changes, face is dropped long enough,
+        or a new detection session begins.
+        """
+        try:
+            self.head_pose_estimator.reset()
+        except Exception:
+            pass
+
+        try:
+            self.head_pose_calibrator.reset()
+        except Exception:
+            pass    
 
     def _buzz_drowsy(self, fps: float):
         # Distinct: longer / stronger
@@ -309,7 +329,7 @@ class DetectionLoop:
         if not self.headless:
             cv2.imshow("Drowsiness System", display)
 
-    def _run_detectors(self, frame, features, hands_norm):
+    def _run_detectors(self, frame, features, hands_norm, pose_state):
         expr = self.expression_classifier.classify(
             features.lms_px,
             features.h,
@@ -326,16 +346,16 @@ class DetectionLoop:
             expr,
             hands_data=hands_norm,
             face_center=features.face_center_norm,
-            pitch=features.pitch,
+            pitch=(pose_state.pitch_rel if pose_state.is_calibrated else None),
         )
 
         drowsy_state = self.detector.get_detailed_state()
         is_drowsy = bool(drowsy_state.get("is_drowsy", False))
 
         is_distracted, should_log_distraction, distraction_info = self.distraction_detector.analyze(
-            features.pitch,
-            features.yaw,
-            features.roll,
+            pose_state.pitch_rel,
+            pose_state.yaw_rel,
+            pose_state.roll_rel,
             hands=hands_norm,
             face=features.face_center_norm,
             is_drowsy=is_drowsy,
@@ -395,10 +415,20 @@ class DetectionLoop:
                     log.info("User changed: %s -> %s", getattr(self.user, "user_id", "?"), candidate.user_id)
                     self.user = candidate
                     self.detector.set_active_user(candidate)
+                    self._reset_pose_session_state()
                     self.expression_classifier.reset()
                     self._buzz_user_identified()
 
-        out = self._run_detectors(frame, features, hands_norm)
+        pose_state = self.head_pose_calibrator.update(
+            pitch=features.pitch,
+            yaw=features.yaw,
+            roll=features.roll,
+            face_confidence=features.face_confidence,
+            face_detected=True,
+        )
+        
+        out = self._run_detectors(frame, features, hands_norm, pose_state)
+
 
         final = StatusAggregator.aggregate(
             drowsy_status=out["drowsy_status"],
@@ -445,6 +475,27 @@ class DetectionLoop:
 
         user_label = f"User {getattr(self.user, 'user_id', '?')}"
         dstate = out.get("drowsy_state") or {}
+
+        hud_debug = dict(dstate)
+        hud_debug.update(
+            {
+                "pose_calibrated": bool(pose_state.is_calibrated),
+                "pose_sample_count": int(pose_state.sample_count),
+
+                "pitch_raw": float(pose_state.pitch_raw),
+                "yaw_raw": float(pose_state.yaw_raw),
+                "roll_raw": float(pose_state.roll_raw),
+
+                "pitch_rel": float(pose_state.pitch_rel),
+                "yaw_rel": float(pose_state.yaw_rel),
+                "roll_rel": float(pose_state.roll_rel),
+
+                "baseline_pitch": pose_state.baseline_pitch,
+                "baseline_yaw": pose_state.baseline_yaw,
+                "baseline_roll": pose_state.baseline_roll,
+            }
+        )
+
         self.visualizer.draw_detection_hud(
             display,
             user_label,
@@ -453,14 +504,13 @@ class DetectionLoop:
             fps,
             features.avg_ear,  # display smoothed
             features.mar,
-            int(dstate.get("blink_count", 0)),  # NEW: use real blink count
+            int(dstate.get("blink_count", 0)),
             out["expr"],
-            (features.pitch, features.yaw, features.roll),
-            # NEW: hybrid-weighted HUD diagnostics
+            (pose_state.pitch_rel, pose_state.yaw_rel, pose_state.roll_rel),
             perclos=dstate.get("perclos"),
             drowsy_score=dstate.get("drowsy_score"),
             score_drowsy=dstate.get("score_drowsy"),
-            debug_state=dstate,
+            debug_state=hud_debug,
         )
 
     def face_recognition(self, frame_rgb, display, results):
@@ -495,6 +545,7 @@ class DetectionLoop:
             log.info(f"User identified: {user.user_id}")
             self.user = user
             self.detector.set_active_user(user)
+            self._reset_pose_session_state()
             self.current_mode = "DETECTING"
             self.recognition_patience = 0
 
@@ -545,6 +596,7 @@ class DetectionLoop:
             log.info(f"Calibration detected existing user. Switching to user_id={getattr(user, 'user_id', '?')}")
             self.user = user
             self.detector.set_active_user(user)
+            self._reset_pose_session_state()
             self.current_mode = "DETECTING"
             self.recognition_patience = 0
             self._post_calibration_cooldown = 45
@@ -578,6 +630,7 @@ class DetectionLoop:
                 log.info(f"New User Registered: ID {new_user.user_id}")
                 self.user = new_user
                 self.detector.set_active_user(new_user)
+                self._reset_pose_session_state()
                 self.current_mode = "DETECTING"
                 log.info("Switched to DETECTING mode after registration.")
 
@@ -613,6 +666,10 @@ class DetectionLoop:
             pass
         try:
             self.expression_classifier.reset()
+        except Exception:
+            pass
+        try:
+            self._reset_pose_session_state()
         except Exception:
             pass
 

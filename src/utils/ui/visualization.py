@@ -131,6 +131,46 @@ class Visualizer:
             debug_lines.append(f"EyesClosed: {debug_state.get('eyes_closed')}")
             debug_lines.append(f"ScoreLatch: {debug_state.get('score_drowsy')}")
 
+            pose_calibrated = debug_state.get("pose_calibrated")
+            pose_sample_count = debug_state.get("pose_sample_count")
+
+            debug_lines.append(f"Calib:      {'ON' if pose_calibrated else 'OFF'}")
+            if pose_sample_count is not None:
+                debug_lines.append(f"PoseSamples:{pose_sample_count}")
+
+            pitch_raw = debug_state.get("pitch_raw")
+            yaw_raw = debug_state.get("yaw_raw")
+            roll_raw = debug_state.get("roll_raw")
+
+            pitch_rel = debug_state.get("pitch_rel")
+            yaw_rel = debug_state.get("yaw_rel")
+            roll_rel = debug_state.get("roll_rel")
+
+            if pitch_raw is not None:
+                debug_lines.append(f"P_raw:      {pitch_raw:.2f}")
+            if yaw_raw is not None:
+                debug_lines.append(f"Y_raw:      {yaw_raw:.2f}")
+            if roll_raw is not None:
+                debug_lines.append(f"R_raw:      {roll_raw:.2f}")
+
+            if pitch_rel is not None:
+                debug_lines.append(f"P_rel:      {pitch_rel:.2f}")
+            if yaw_rel is not None:
+                debug_lines.append(f"Y_rel:      {yaw_rel:.2f}")
+            if roll_rel is not None:
+                debug_lines.append(f"R_rel:      {roll_rel:.2f}")
+
+            baseline_pitch = debug_state.get("baseline_pitch")
+            baseline_yaw = debug_state.get("baseline_yaw")
+            baseline_roll = debug_state.get("baseline_roll")
+
+            if baseline_pitch is not None:
+                debug_lines.append(f"B_Pitch:    {baseline_pitch:.2f}")
+            if baseline_yaw is not None:
+                debug_lines.append(f"B_Yaw:      {baseline_yaw:.2f}")
+            if baseline_roll is not None:
+                debug_lines.append(f"B_Roll:     {baseline_roll:.2f}")
+
             if dscore is not None:
                 debug_lines.append(f"Score:      {dscore:.3f}")
             if on_thr is not None and off_thr is not None:
@@ -149,7 +189,7 @@ class Visualizer:
 
             debug_lines.append(f"Episode:    {debug_state.get('eye_episode_active')}")
             debug_lines.append(f"HardClose:  {debug_state.get('hard_close')}")
-            
+             
             debug_lines.append(f"CurrDrowsy: {debug_state.get('is_current_drowsy')}")
             debug_lines.append(f"Recovering: {debug_state.get('is_recovering')}")
 
