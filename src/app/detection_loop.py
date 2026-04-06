@@ -146,11 +146,11 @@ class DetectionLoop:
 
         # NEW: face-loss + identity recheck controls
         self._no_face_frames = 0
-        self._lost_face_frames_threshold = int(os.getenv("DS_LOST_FACE_FRAMES", "15"))  # ~0.5s at 30fps
+        self._lost_face_frames_threshold = int(os.getenv("DS_LOST_FACE_FRAMES", "15"))  # ~0.5s at 30fps # try 30 for more tolerance
         self._id_last_check_ts = 0.0
-        self._id_recheck_interval_sec = float(os.getenv("DS_ID_RECHECK_SEC", "5.0"))  # periodic re-verify
+        self._id_recheck_interval_sec = float(os.getenv("DS_ID_RECHECK_SEC", "8.0"))  # periodic re-verify  # try 8s for more tolerance (was 5s) - adjust based on testing and desired balance of responsiveness vs false positives
         self._id_mismatch_count = 0
-        self._id_mismatch_max = int(os.getenv("DS_ID_MISMATCH_MAX", "2"))
+        self._id_mismatch_max = int(os.getenv("DS_ID_MISMATCH_MAX", "4")) #update to 4 for ~20% tolerance at 5s recheck with 1s face-recog (adjust based on testing) 
 
         if self.headless:
             log.info("Headless mode enabled (DS_HEADLESS=1): GUI windows/keyboard controls disabled.")
