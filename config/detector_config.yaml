@@ -5,6 +5,11 @@ system:
   vin: "VIN-0001"
   target_fps: 30.0
 
+  gps_enabled: true
+  gps_port: "/dev/ttyAMA0"
+  gps_baud: 9600
+  gps_poll_interval_sec: 0.2
+
 # Removed: user.swap_threshold (unused)
 # Removed: image.local_quality / image.remote_quality (not wired into SystemLogger)
 

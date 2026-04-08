@@ -11,8 +11,10 @@ from src.logging.system_logger import SystemLogger
 from src.infrastructure.data.database import UnifiedDatabase
 from src.infrastructure.data.repository import UnifiedRepository
 from src.app.detection_loop import DetectionLoop
+from src.gps.gps_worker import GPSWorker
 
 log = logging.getLogger(__name__)
+
 
 class DrowsinessSystem:
     CONFIG_PATH = "config/detector_config.yaml"
@@ -21,9 +23,36 @@ class DrowsinessSystem:
     def __init__(self):
         self._ensure_paths()
         self.config = self._load_config()
-        sys_cfg = self.config.get('system', {})
-        self.vin = sys_cfg.get('vin', os.getenv('DS_VIN', 'VIN-0001'))
-        self.fps = float(sys_cfg.get('target_fps', 30.0))
+        sys_cfg = self.config.get("system", {})
+
+        self.vin = sys_cfg.get("vin", os.getenv("DS_VIN", "VIN-0001"))
+        self.fps = float(sys_cfg.get("target_fps", 30.0))
+
+        # GPS config
+        self.gps_enabled = self._to_bool(
+            os.getenv("DS_GPS_ENABLED", sys_cfg.get("gps_enabled", False))
+        )
+        self.gps_port = os.getenv(
+            "DS_GPS_PORT",
+            sys_cfg.get("gps_port", "/dev/ttyAMA0"),
+        )
+        self.gps_baud = int(
+            os.getenv("DS_GPS_BAUD", sys_cfg.get("gps_baud", 9600))
+        )
+        self.gps_poll_interval_sec = float(
+            os.getenv(
+                "DS_GPS_POLL_INTERVAL_SEC",
+                sys_cfg.get("gps_poll_interval_sec", 0.2),
+            )
+        )
+
+        self.db = None
+        self.repo = None
+        self.user_manager = None
+        self.remote_worker = None
+        self.system_logger = None
+        self.gps_worker = None
+        self.camera = None
 
     def run(self):
         try:
@@ -57,16 +86,39 @@ class DrowsinessSystem:
         self.remote_worker = RemoteLogWorker(self.DB_PATH, os.getenv("DS_REMOTE_URL"), True)
         self.system_logger = SystemLogger(self.remote_worker, self.repo, self.vin)
 
-        # 3. Hardware
-        self.camera = Camera(source='auto', resolution=(640, 480))
+        # 3. GPS Worker (optional / non-fatal)
+        if self.gps_enabled:
+            try:
+                self.gps_worker = GPSWorker(
+                    port=self.gps_port,
+                    baud=self.gps_baud,
+                    poll_interval_sec=self.gps_poll_interval_sec,
+                )
+                self.gps_worker.start()
+                log.info("GPS worker initialized successfully")
+            except Exception as e:
+                log.warning("GPS worker failed to initialize: %s", e, exc_info=True)
+
+        # 4. Hardware
+        self.camera = Camera(source="auto", resolution=(640, 480))
         if not self.camera.ready:
             raise RuntimeError("Camera failed to open")
 
     def _cleanup(self):
         log.info("Shutting down...")
-        if hasattr(self, 'remote_worker') and self.remote_worker: self.remote_worker.close()
-        if hasattr(self, 'db') and self.db: self.db.close()
-        if hasattr(self, 'camera') and self.camera: self.camera.release()
+
+        if self.gps_worker:
+            self.gps_worker.close()
+
+        if self.remote_worker:
+            self.remote_worker.close()
+
+        if self.db:
+            self.db.close()
+
+        if self.camera:
+            self.camera.release()
+
         cv2.destroyAllWindows()
 
     def _ensure_paths(self):
@@ -75,6 +127,12 @@ class DrowsinessSystem:
 
     def _load_config(self):
         if Path(self.CONFIG_PATH).exists():
-            with open(self.CONFIG_PATH) as f:
-                return yaml.safe_load(f)
+            with open(self.CONFIG_PATH, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
         return {}
+
+    @staticmethod
+    def _to_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
