@@ -17,11 +17,7 @@ class GPSWorker:
     - own GPSService
     - poll in background thread
     - keep latest state
-    - expose latest GPS snapshot safely
-
-    No websocket.
-    No DB.
-    No dashboard transport.
+    - optionally publish to dashboard via publisher
     """
 
     def __init__(
@@ -29,10 +25,14 @@ class GPSWorker:
         port: str = "/dev/ttyAMA0",
         baud: int = 9600,
         poll_interval_sec: float = 0.2,
+        publisher=None,
+        send_interval_sec: float = 2.0,
     ):
         self.port = port
         self.baud = int(baud)
         self.poll_interval_sec = float(poll_interval_sec)
+        self.publisher = publisher
+        self.send_interval_sec = float(send_interval_sec)
 
         self.gps = GPSService(port=self.port, baud=self.baud)
         self._stop_event = threading.Event()
@@ -41,6 +41,7 @@ class GPSWorker:
 
         self._latest_state = GPSState(source_port=self.port)
         self._connected = False
+        self._last_send_ts = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -68,9 +69,25 @@ class GPSWorker:
         while not self._stop_event.is_set():
             try:
                 state = self.gps.read()
+
                 if state is not None:
                     with self._lock:
                         self._latest_state = copy.deepcopy(state)
+
+                    now = time.time()
+                    should_send = (
+                        self.publisher is not None
+                        and state.gps_fix
+                        and state.lat is not None
+                        and state.lng is not None
+                        and (now - self._last_send_ts) >= self.send_interval_sec
+                    )
+
+                    if should_send:
+                        ok = self.publisher.send_location(state)
+                        if ok:
+                            self._last_send_ts = now
+
             except Exception as e:
                 log.warning("GPSWorker read loop error: %s", e, exc_info=True)
 
