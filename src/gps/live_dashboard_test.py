@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="Live GPS dashboard test")
     parser.add_argument("--port", default="/dev/ttyAMA0")
     parser.add_argument("--baud", type=int, default=9600)
-    parser.add_argument("--vehicle-id", default="999")
+    parser.add_argument("--vehicle-id", default="1210")
     parser.add_argument("--ws-url", required=True)
     parser.add_argument("--poll-interval", type=float, default=0.2)
     parser.add_argument("--send-interval", type=float, default=2.0)
