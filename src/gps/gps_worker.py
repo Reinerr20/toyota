@@ -27,6 +27,7 @@ class GPSWorker:
         poll_interval_sec: float = 0.2,
         publisher=None,
         send_interval_sec: float = 2.0,
+        
     ):
         self.port = port
         self.baud = int(baud)
@@ -42,6 +43,7 @@ class GPSWorker:
         self._latest_state = GPSState(source_port=self.port)
         self._connected = False
         self._last_send_ts = 0.0
+        self._last_no_fix_log_ts = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -82,6 +84,16 @@ class GPSWorker:
                         and state.lng is not None
                         and (now - self._last_send_ts) >= self.send_interval_sec
                     )
+                    if self.publisher is not None and not state.gps_fix:
+                        if (now - self._last_no_fix_log_ts) >= 5.0:
+                            log.info(
+                                "GPS waiting for fix (lat=%s lng=%s sats=%s hdop=%s)",
+                                state.lat,
+                                state.lng,
+                                state.satellites,
+                                state.hdop,
+                            )
+                            self._last_no_fix_log_ts = now
 
                     if should_send:
                         ok = self.publisher.send_location(state)
