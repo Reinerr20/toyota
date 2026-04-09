@@ -10,6 +10,12 @@ system:
   gps_baud: 9600
   gps_poll_interval_sec: 0.2
 
+  gps_publish_enabled: true
+  gps_vehicle_id: "1210"
+  gps_ws_url: "ws://203.100.57.59:3300/?vehicle_id=1210&device=GPS"
+  gps_send_interval_sec: 2.0
+  gps_ws_reconnect_interval_sec: 3.0
+
 # Removed: user.swap_threshold (unused)
 # Removed: image.local_quality / image.remote_quality (not wired into SystemLogger)
 
