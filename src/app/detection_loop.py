@@ -3,6 +3,7 @@ from typing import Optional
 import os
 import signal
 import time
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -26,6 +27,15 @@ from src.utils.config.yaml_loader import load_yaml_section
 
 log = logging.getLogger(__name__)
 
+@dataclass
+class SessionDriverProfile:
+    """
+    Session-only driver profile for operation mode.
+    Used to carry a personalized EAR threshold without registering a new user.
+    """
+    user_id: int = 0
+    ear_threshold: float = 0.22
+    label: str = "Unknown Driver"
 
 class DetectionLoop:
     def __init__(
@@ -127,10 +137,23 @@ class DetectionLoop:
             indices_mouth=M_MAR,
         )
 
+        self.identity_mode = str(os.getenv("DS_IDENTITY_MODE", "operation")).strip().lower()
+        if self.identity_mode not in {"operation", "enrollment"}:
+            self.identity_mode = "operation"
+        self.allow_auto_register = self.identity_mode == "enrollment"
+
         self.user = initial_user_profile
         self.current_mode = "DETECTING" if initial_user_profile else "WAITING_FOR_USER"
         if self.user:
             self.detector.set_active_user(self.user)
+        else:
+            self.detector.set_active_user(None)
+
+        log.info(
+            "Identity mode initialized: %s (auto_register=%s)",
+            self.identity_mode,
+            self.allow_auto_register,
+        )
 
         self._frame_idx = 0
         self._show_debug_deltas = False
@@ -172,7 +195,80 @@ class DetectionLoop:
         try:
             self.head_pose_calibrator.reset()
         except Exception:
-            pass    
+            pass
+
+    def _make_session_profile(self, ear_threshold: float) -> SessionDriverProfile:
+        return SessionDriverProfile(
+            user_id=0,
+            ear_threshold=float(ear_threshold),
+            label="Unknown Driver",
+        )
+
+    def _apply_session_profile(self, ear_threshold: float) -> None:
+        """
+        Apply calibration result as a temporary session profile
+        without creating/registering a new user.
+        """
+        session_user = self._make_session_profile(ear_threshold)
+        self.user = session_user
+        self.detector.set_active_user(session_user)
+        self._reset_pose_session_state()
+        self.current_mode = "DETECTING"
+        self.recognition_patience = 0
+        self._id_mismatch_count = 0
+        self._no_face_frames = 0
+
+        log.info(
+            "Session-only calibration applied (identity_mode=%s, ear_threshold=%.3f)",
+            self.identity_mode,
+            float(ear_threshold),
+        )
+
+    def _enter_unknown_detection(self, reason: str = "no_match") -> None:
+        """
+        Enter DETECTING mode without a recognized user.
+        Used in operation mode to keep safety detection running
+        while preventing auto-enrollment.
+        """
+        if (
+            self.current_mode == "DETECTING"
+            and (now - self._id_last_check_ts) >= self._id_recheck_interval_sec
+        ):
+            self._id_last_check_ts = now
+            candidate = self.user_manager.find_best_match(frame)
+            current_user_id = getattr(self.user, "user_id", 0) if self.user is not None else 0
+
+            # CASE 1: session/unknown driver -> upgrade to recognized if possible
+            if current_user_id == 0:
+                if candidate is not None:
+                    log.info("Unknown/session driver identified as user_id=%s", candidate.user_id)
+                    self.user = candidate
+                    self.detector.set_active_user(candidate)
+                    self._reset_pose_session_state()
+                    self.expression_classifier.reset()
+                    self._id_mismatch_count = 0
+                    self._buzz_user_identified()
+
+            # CASE 2: recognized driver -> verify or drop
+            else:
+                if candidate is None:
+                    self._id_mismatch_count += 1
+                    if self._id_mismatch_count >= self._id_mismatch_max:
+                        self._drop_active_user("identity_unverified")
+                        return
+                else:
+                    self._id_mismatch_count = 0
+                    if candidate.user_id != current_user_id:
+                        log.info(
+                            "User changed: %s -> %s",
+                            current_user_id,
+                            candidate.user_id,
+                        )
+                        self.user = candidate
+                        self.detector.set_active_user(candidate)
+                        self._reset_pose_session_state()
+                        self.expression_classifier.reset()
+                        self._buzz_user_identified()    
 
     def _buzz_drowsy(self, fps: float):
         # Distinct: longer / stronger
@@ -397,27 +493,45 @@ class DetectionLoop:
         now = time.time()
         if (
             self.current_mode == "DETECTING"
-            and self.user is not None
             and (now - self._id_last_check_ts) >= self._id_recheck_interval_sec
         ):
             self._id_last_check_ts = now
             candidate = self.user_manager.find_best_match(frame)
 
-            if candidate is None:
-                self._id_mismatch_count += 1
-                if self._id_mismatch_count >= self._id_mismatch_max:
-                    self._drop_active_user("identity_unverified")
-                    return
-            else:
-                # verified (same user) or detected a different user
-                self._id_mismatch_count = 0
-                if candidate.user_id != getattr(self.user, "user_id", None):
-                    log.info("User changed: %s -> %s", getattr(self.user, "user_id", "?"), candidate.user_id)
+            # CASE 1: currently unknown driver, try to identify
+            if self.user is None:
+                if candidate is not None:
+                    log.info("Unknown driver identified: user_id=%s", candidate.user_id)
                     self.user = candidate
                     self.detector.set_active_user(candidate)
                     self._reset_pose_session_state()
                     self.expression_classifier.reset()
+                    self._id_mismatch_count = 0
                     self._buzz_user_identified()
+
+            # CASE 2: currently recognized driver, verify or switch
+            else:
+                if candidate is None:
+                    self._id_mismatch_count += 1
+                    if self._id_mismatch_count >= self._id_mismatch_max:
+                        if self.identity_mode == "operation":
+                            self._enter_unknown_detection("identity_unverified")
+                        else:
+                            self._drop_active_user("identity_unverified")
+                        return
+                else:
+                    self._id_mismatch_count = 0
+                    if candidate.user_id != getattr(self.user, "user_id", None):
+                        log.info(
+                            "User changed: %s -> %s",
+                            getattr(self.user, "user_id", "?"),
+                            candidate.user_id,
+                        )
+                        self.user = candidate
+                        self.detector.set_active_user(candidate)
+                        self._reset_pose_session_state()
+                        self.expression_classifier.reset()
+                        self._buzz_user_identified()
 
         pose_state = self.head_pose_calibrator.update(
             pitch=features.pitch,
@@ -473,7 +587,10 @@ class DetectionLoop:
                 severity=final.distraction_severity or "Medium",
             )
 
-        user_label = f"User {getattr(self.user, 'user_id', '?')}"
+        if self.user is not None and getattr(self.user, "user_id", 0) != 0:
+            user_label = f"User {self.user.user_id}"
+        else:
+            user_label = "Unknown Driver"
         dstate = out.get("drowsy_state") or {}
 
         hud_debug = dict(dstate)
@@ -564,14 +681,15 @@ class DetectionLoop:
             return
 
     def calibration(self, frame):
-        log.info("Starting Calibration...")
+        log.info("Starting Calibration... (identity_mode=%s)", self.identity_mode)
+
         # Stop any ongoing buzzer output before calibration UI
         try:
             self.buzzer.off()
         except Exception:
             pass
 
-        # NEW: audible "calibration running" indicator
+        # audible "calibration running" indicator
         self._buzz_calibration_start()
 
         result = self.ear_calibrator.calibrate()
@@ -584,16 +702,18 @@ class DetectionLoop:
 
         # Only destroy GUI windows in non-headless
         if not self.headless:
-            # main_calibrator/ui uses "Drowsiness System"
             try:
                 cv2.destroyWindow("Drowsiness System")
             except Exception:
                 pass
 
-        # NEW: main_calibrator can return ("user_swap", user_profile)
+        # Existing user recognized during calibration
         if isinstance(result, tuple) and len(result) == 2 and result[0] == "user_swap":
             user = result[1]
-            log.info(f"Calibration detected existing user. Switching to user_id={getattr(user, 'user_id', '?')}")
+            log.info(
+                "Calibration recognized existing user. Switching to user_id=%s",
+                getattr(user, "user_id", "?"),
+            )
             self.user = user
             self.detector.set_active_user(user)
             self._reset_pose_session_state()
@@ -601,10 +721,54 @@ class DetectionLoop:
             self.recognition_patience = 0
             self._post_calibration_cooldown = 45
 
-            # NEW: calibration ended + user identified
             self._buzz_calibration_success()
             self._buzz_user_identified()
             return
+
+        result_threshold = result
+
+        if result_threshold is not None and isinstance(result_threshold, float):
+            log.info("Calibration Success. Threshold: %.3f", result_threshold)
+            self._buzz_calibration_success()
+
+            # ENROLLMENT MODE: calibration + register user
+            if self.allow_auto_register:
+                try:
+                    new_id = self.user_manager.repo.get_next_user_id()
+                except Exception:
+                    new_id = int(time.time())
+
+                fresh_frame = frame
+                new_user = self.user_manager.register_new_user(
+                    fresh_frame,
+                    result_threshold,
+                    new_id,
+                )
+
+                if new_user:
+                    log.info("New User Registered: ID %s", new_user.user_id)
+                    self.user = new_user
+                    self.detector.set_active_user(new_user)
+                    self._reset_pose_session_state()
+                    self.current_mode = "DETECTING"
+                    log.info("Switched to DETECTING mode after registration.")
+                    self._buzz_user_identified()
+                else:
+                    log.error("Failed to register new user.")
+                    self.current_mode = "WAITING_FOR_USER"
+
+            # OPERATION MODE: calibration only, no user registration
+            else:
+                self._apply_session_profile(result_threshold)
+                log.info("Operation mode: session-only threshold applied, no user registered.")
+
+        else:
+            log.warning("Calibration failed.")
+            self.current_mode = "WAITING_FOR_USER"
+            self._buzz_calibration_fail()
+
+        self.recognition_patience = 0
+        self._post_calibration_cooldown = 45
 
         result_threshold = result
 

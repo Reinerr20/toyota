@@ -42,7 +42,8 @@ class SystemLogger:
         severity: str = None,
     ):
         timestamp = datetime.now()
-        remote_allowed = self.remote and self.remote.enabled and user_id != UNKNOWN_USER_ID
+        safe_user_id = UNKNOWN_USER_ID if user_id in (None, "", False) else int(user_id)
+        remote_allowed = self.remote and self.remote.enabled
 
         norm_status = (event_type or "event").strip().lower()
 
@@ -70,7 +71,7 @@ class SystemLogger:
             try:
                 event = DrowsinessEvent(
                     vehicle_identification_number=self.vehicle_vin,
-                    user_id=user_id,
+                    user_id=safe_user_id,
                     status=norm_status,
                     time=timestamp,
                     img_drowsiness=jpeg_local,
@@ -90,7 +91,7 @@ class SystemLogger:
             try:
                 self.remote.send_or_queue(
                     vehicle_vin=self.vehicle_vin,
-                    user_id=user_id,
+                    user_id=safe_user_id,
                     status=norm_status,
                     time_dt=timestamp,
                     raw_jpeg=jpeg_remote,
