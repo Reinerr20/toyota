@@ -158,11 +158,12 @@ class DrowsinessDetector:
 
         # Final drowsy state = (episode) OR (score) OR (hard close)
         hard_close = self.counters["EYES_CLOSED"] >= int(self.cfg["score"]["hard_close_frames"])
+        self._hard_close = bool(hard_close)
 
         is_current_drowsy = bool(
             self.episode["active"]
+            or self._score_drowsy
             or hard_close
-            or self.states["EYES_CLOSED"]
         )
 
         self.states["IS_CURRENT_DROWSY"] = is_current_drowsy
