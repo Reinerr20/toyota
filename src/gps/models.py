@@ -2,6 +2,10 @@ from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
 
 
+from dataclasses import dataclass, asdict
+from typing import Optional, Dict, Any
+
+
 @dataclass
 class GPSState:
     lat: Optional[float] = None
@@ -15,6 +19,11 @@ class GPSState:
     last_sentence: Optional[str] = None
     source_port: Optional[str] = None
     raw_line: Optional[str] = None
+
+    # NEW: timing + ordering metadata
+    gps_read_ts_unix_ms: Optional[int] = None  # when GPS sentence/state was parsed
+    ts_unix_ms: Optional[int] = None           # when payload was sent/published
+    seq: Optional[int] = None                  # monotonically increasing per app run
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -80,6 +80,12 @@ class GPSPublisher:
             payload["hdop"] = state.hdop
         if state.gps_fix is not None:
             payload["gps_fix"] = state.gps_fix
+        if state.ts_unix_ms is not None:
+            payload["ts_unix_ms"] = state.ts_unix_ms
+        if state.gps_read_ts_unix_ms is not None:
+            payload["gps_read_ts_unix_ms"] = state.gps_read_ts_unix_ms
+        if state.seq is not None:
+            payload["seq"] = state.seq
 
         return payload
 
