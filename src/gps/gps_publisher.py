@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 from typing import Optional
+from datetime import datetime, timezone
 
 import websocket
 
@@ -10,6 +11,13 @@ from src.gps.models import GPSState
 
 log = logging.getLogger(__name__)
 
+
+def _ms_to_local_iso(ms: int) -> str:
+    return (
+        datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        .astimezone()
+        .isoformat(timespec="milliseconds")
+    )
 
 class GPSPublisher:
     """
@@ -82,8 +90,12 @@ class GPSPublisher:
             payload["gps_fix"] = state.gps_fix
         if state.ts_unix_ms is not None:
             payload["ts_unix_ms"] = state.ts_unix_ms
+            payload["ts_iso"] = _ms_to_local_iso(state.ts_unix_ms)
+
         if state.gps_read_ts_unix_ms is not None:
             payload["gps_read_ts_unix_ms"] = state.gps_read_ts_unix_ms
+            payload["gps_read_ts_iso"] = _ms_to_local_iso(state.gps_read_ts_unix_ms)
+
         if state.seq is not None:
             payload["seq"] = state.seq
 
