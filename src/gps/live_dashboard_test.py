@@ -5,7 +5,7 @@ import time
 from src.gps.gps_publisher import GPSPublisher
 from src.gps.gps_worker import GPSWorker
 from src.gps.models import GPSState
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def run_real_mode(args, publisher):
@@ -17,14 +17,11 @@ def run_real_mode(args, publisher):
         send_interval_sec=args.send_interval,
     )
 
-def ms_to_local_iso(ms):
+def ms_to_readable_local(ms):
     if ms is None:
         return None
-    return (
-        datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-        .astimezone()
-        .isoformat(timespec="milliseconds")
-    )
+    dt = datetime.fromtimestamp(ms / 1000)
+    return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 1000:03d} WIB"
 
     try:
         worker.start()
@@ -83,9 +80,9 @@ def run_mock_mode(args, publisher):
             print(
                 f"mock_sent={ok} lat={state.lat} lng={state.lng} "
                 f"speed={state.speed_kmph} seq={state.seq} "
-                f"ts={state.ts_unix_ms} ts_iso={ms_to_local_iso(state.ts_unix_ms)} "
+                f"ts={state.ts_unix_ms} ts_readable={ms_to_readable_local(state.ts_unix_ms)} "
                 f"gps_read_ts={state.gps_read_ts_unix_ms} "
-                f"gps_read_ts_iso={ms_to_local_iso(state.gps_read_ts_unix_ms)}"
+                f"gps_read_ts_readable={ms_to_readable_local(state.gps_read_ts_unix_ms)}"
             )
 
             lat += args.mock_step_lat
