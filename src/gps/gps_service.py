@@ -1,5 +1,6 @@
 import copy
 import logging
+import time
 from typing import Optional
 
 import serial
@@ -88,6 +89,7 @@ class GPSService:
 
         self.state.raw_line = line
         self.state.last_sentence = msg.sentence_type if hasattr(msg, "sentence_type") else None
+        self.state.gps_read_ts_unix_ms = int(time.time() * 1000)
 
         # GGA = satellites / hdop / altitude / fix quality
         if isinstance(msg, pynmea2.types.talker.GGA):

@@ -44,6 +44,7 @@ class GPSWorker:
         self._connected = False
         self._last_send_ts = 0.0
         self._last_no_fix_log_ts = 0.0
+        self._gps_seq = 0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -96,6 +97,14 @@ class GPSWorker:
                             self._last_no_fix_log_ts = now
 
                     if should_send:
+                        self._gps_seq += 1
+                        state.ts_unix_ms = int(now * 1000)
+                        state.seq = self._gps_seq
+
+                        # Keep latest state updated with publish metadata too
+                        with self._lock:
+                            self._latest_state = copy.deepcopy(state)
+
                         ok = self.publisher.send_location(state)
                         if ok:
                             self._last_send_ts = now
