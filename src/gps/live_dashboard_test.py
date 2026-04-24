@@ -32,8 +32,11 @@ def ms_to_readable_local(ms):
             print(
                 f"fix={state.gps_fix} lat={state.lat} lng={state.lng} "
                 f"sats={state.satellites} hdop={state.hdop} speed={state.speed_kmph} "
-                f"seq={getattr(state, 'seq', None)} ts={getattr(state, 'ts_unix_ms', None)} "
-                f"gps_read_ts={getattr(state, 'gps_read_ts_unix_ms', None)}"
+                f"seq={getattr(state, 'seq', None)} "
+                f"ts={getattr(state, 'ts_unix_ms', None)} "
+                f"ts_readable={ms_to_readable_local(getattr(state, 'ts_unix_ms', None))} "
+                f"gps_read_ts={getattr(state, 'gps_read_ts_unix_ms', None)} "
+                f"gps_read_ts_readable={ms_to_readable_local(getattr(state, 'gps_read_ts_unix_ms', None))}"
             )
             time.sleep(2)
 
@@ -80,7 +83,8 @@ def run_mock_mode(args, publisher):
             print(
                 f"mock_sent={ok} lat={state.lat} lng={state.lng} "
                 f"speed={state.speed_kmph} seq={state.seq} "
-                f"ts={state.ts_unix_ms} ts_readable={ms_to_readable_local(state.ts_unix_ms)} "
+                f"ts={state.ts_unix_ms} "
+                f"ts_readable={ms_to_readable_local(state.ts_unix_ms)} "
                 f"gps_read_ts={state.gps_read_ts_unix_ms} "
                 f"gps_read_ts_readable={ms_to_readable_local(state.gps_read_ts_unix_ms)}"
             )
