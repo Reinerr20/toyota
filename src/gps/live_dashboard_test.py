@@ -80,7 +80,8 @@ def run_mock_mode(args, publisher):
 
             ok = publisher.send_location(state)
 
-            print(
+            if ok :
+                 print(
                 f"mock_sent={ok} lat={state.lat} lng={state.lng} "
                 f"speed={state.speed_kmph} seq={state.seq} "
                 f"ts={state.ts_unix_ms} "
@@ -88,6 +89,18 @@ def run_mock_mode(args, publisher):
                 f"gps_read_ts={state.gps_read_ts_unix_ms} "
                 f"gps_read_ts_readable={ms_to_readable_local(state.gps_read_ts_unix_ms)}"
             )
+                 
+                #  // check local storage 
+                #  // jika ada kirim dan clear
+                #  // jika tidak skip
+            else :
+                print(
+                    f"error send location"
+                )
+                
+            #  location kedalam 1 local storage dengan interval 1 menit
+
+           
 
             lat += args.mock_step_lat
             lng += args.mock_step_lng
