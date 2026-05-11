@@ -282,6 +282,10 @@ db.sqlite3-journal
 .pypirc
 
 # Local database
-/data/cc.db
 /data/*.db
 /data/*.sqlite
+
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
