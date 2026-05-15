@@ -27,6 +27,8 @@ class GPSWorker:
         poll_interval_sec: float = 0.2,
         publisher=None,
         send_interval_sec: float = 2.0,
+        compass_service=None,
+        compass_publish_enabled: bool = True,
         
     ):
         self.port = port
@@ -34,6 +36,8 @@ class GPSWorker:
         self.poll_interval_sec = float(poll_interval_sec)
         self.publisher = publisher
         self.send_interval_sec = float(send_interval_sec)
+        self.compass_service = compass_service
+        self.compass_publish_enabled = bool(compass_publish_enabled)
 
         self.gps = GPSService(port=self.port, baud=self.baud)
         self._stop_event = threading.Event()
@@ -44,6 +48,7 @@ class GPSWorker:
         self._connected = False
         self._last_send_ts = 0.0
         self._last_no_fix_log_ts = 0.0
+        self._last_compass_warn_ts = 0.0
         self._gps_seq = 0
 
     def start(self) -> None:
@@ -74,6 +79,9 @@ class GPSWorker:
                 state = self.gps.read()
 
                 if state is not None:
+                    if self.compass_service is not None and self.compass_publish_enabled:
+                        self._attach_compass_state(state)
+
                     with self._lock:
                         self._latest_state = copy.deepcopy(state)
 
@@ -124,6 +132,31 @@ class GPSWorker:
 
     def is_connected(self) -> bool:
         return bool(self._connected)
+
+    def _attach_compass_state(self, state: GPSState) -> None:
+        try:
+            compass_state = self.compass_service.read()
+        except Exception as e:
+            self._log_compass_warning("Compass read failed: %s", e)
+            return
+
+        if compass_state is None or compass_state.heading_deg is None:
+            return
+
+        state.heading_deg = float(compass_state.heading_deg)
+        state.heading_source = compass_state.source
+        state.compass_fix = bool(compass_state.compass_fix)
+        state.mag_x = compass_state.mag_x
+        state.mag_y = compass_state.mag_y
+        state.mag_z = compass_state.mag_z
+        state.compass_chip = compass_state.chip
+        state.compass_address = compass_state.address
+
+    def _log_compass_warning(self, message: str, *args) -> None:
+        now = time.time()
+        if (now - self._last_compass_warn_ts) >= 5.0:
+            log.warning(message, *args)
+            self._last_compass_warn_ts = now
 
     def close(self) -> None:
         self._stop_event.set()

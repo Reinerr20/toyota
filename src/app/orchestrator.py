@@ -13,6 +13,7 @@ from src.infrastructure.data.repository import UnifiedRepository
 from src.app.detection_loop import DetectionLoop
 from src.gps.gps_worker import GPSWorker
 from src.gps.gps_publisher import GPSPublisher
+from src.compass.compass_service import CompassService
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,35 @@ class DrowsinessSystem:
             )
         )
 
+        # Optional compass config
+        self.compass_enabled = self._to_bool(
+            os.getenv("DS_COMPASS_ENABLED", sys_cfg.get("compass_enabled", False))
+        )
+        self.compass_bus = int(
+            os.getenv("DS_COMPASS_BUS", sys_cfg.get("compass_bus", 1))
+        )
+        self.compass_address = str(
+            os.getenv("DS_COMPASS_ADDRESS", sys_cfg.get("compass_address", "auto"))
+        )
+        self.compass_heading_offset_deg = float(
+            os.getenv(
+                "DS_COMPASS_HEADING_OFFSET_DEG",
+                sys_cfg.get("compass_heading_offset_deg", 0.0),
+            )
+        )
+        self.compass_declination_deg = float(
+            os.getenv(
+                "DS_COMPASS_DECLINATION_DEG",
+                sys_cfg.get("compass_declination_deg", 0.0),
+            )
+        )
+        self.compass_publish_enabled = self._to_bool(
+            os.getenv(
+                "DS_COMPASS_PUBLISH_ENABLED",
+                sys_cfg.get("compass_publish_enabled", True),
+            )
+        )
+
         self.db = None
         self.repo = None
         self.user_manager = None
@@ -81,6 +111,7 @@ class DrowsinessSystem:
         self.system_logger = None
         self.gps_publisher = None
         self.gps_worker = None
+        self.compass_service = None
         self.camera = None
 
     def run(self):
@@ -128,7 +159,25 @@ class DrowsinessSystem:
                 log.warning("GPS publisher failed to initialize: %s", e, exc_info=True)
                 self.gps_publisher = None
 
-        # 4. GPS worker (optional / non-fatal)
+        # 4. Compass service (optional / non-fatal)
+        if self.compass_enabled:
+            try:
+                self.compass_service = CompassService(
+                    bus=self.compass_bus,
+                    address=self.compass_address,
+                    heading_offset_deg=self.compass_heading_offset_deg,
+                    declination_deg=self.compass_declination_deg,
+                )
+                self.compass_service.connect()
+                if getattr(self.compass_service, "connected", False):
+                    log.info("Compass service initialized successfully")
+                else:
+                    self.compass_service = None
+            except Exception as e:
+                log.warning("Compass service failed to initialize: %s", e, exc_info=True)
+                self.compass_service = None
+
+        # 5. GPS worker (optional / non-fatal)
         if self.gps_enabled:
             try:
                 self.gps_worker = GPSWorker(
@@ -137,6 +186,8 @@ class DrowsinessSystem:
                     poll_interval_sec=self.gps_poll_interval_sec,
                     publisher=self.gps_publisher,
                     send_interval_sec=self.gps_send_interval_sec,
+                    compass_service=self.compass_service,
+                    compass_publish_enabled=self.compass_publish_enabled,
                 )
                 self.gps_worker.start()
                 log.info("GPS worker initialized successfully")
@@ -144,7 +195,7 @@ class DrowsinessSystem:
                 log.warning("GPS worker failed to initialize: %s", e, exc_info=True)
                 self.gps_worker = None
 
-        # 5. Hardware
+        # 6. Hardware
         self.camera = Camera(source="auto", resolution=(640, 480))
         if not self.camera.ready:
             raise RuntimeError("Camera failed to open")
@@ -157,6 +208,9 @@ class DrowsinessSystem:
 
         if self.gps_publisher:
             self.gps_publisher.close()
+
+        if self.compass_service:
+            self.compass_service.close()
 
         if self.remote_worker:
             self.remote_worker.close()

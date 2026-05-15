@@ -96,6 +96,24 @@ class GPSPublisher:
         if state.seq is not None:
             payload["seq"] = state.seq
 
+        if state.heading_deg is not None:
+            payload["heading_deg"] = state.heading_deg
+            log.info("GPS payload includes heading_deg=%s", state.heading_deg)
+        if state.heading_source is not None:
+            payload["heading_source"] = state.heading_source
+        if state.compass_fix:
+            payload["compass_fix"] = state.compass_fix
+        if state.compass_chip is not None:
+            payload["compass_chip"] = state.compass_chip
+        if state.compass_address is not None:
+            payload["compass_address"] = state.compass_address
+        if state.mag_x is not None:
+            payload["mag_x"] = state.mag_x
+        if state.mag_y is not None:
+            payload["mag_y"] = state.mag_y
+        if state.mag_z is not None:
+            payload["mag_z"] = state.mag_z
+
         return payload
 
     def send_location(self, state: GPSState) -> bool:

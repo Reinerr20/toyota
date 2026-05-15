@@ -1,27 +1,24 @@
 import argparse
 import logging
 import time
+from datetime import datetime
 
+from src.compass.compass_service import CompassService
 from src.gps.gps_publisher import GPSPublisher
 from src.gps.gps_worker import GPSWorker
 from src.gps.models import GPSState
-from datetime import datetime
 
 
-def run_real_mode(args, publisher):
+def run_real_mode(args, publisher, compass_service=None):
     worker = GPSWorker(
         port=args.port,
         baud=args.baud,
         poll_interval_sec=args.poll_interval,
         publisher=publisher,
         send_interval_sec=args.send_interval,
+        compass_service=compass_service,
+        compass_publish_enabled=args.compass_enabled,
     )
-
-def ms_to_readable_local(ms):
-    if ms is None:
-        return None
-    dt = datetime.fromtimestamp(ms / 1000)
-    return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 1000:03d} WIB"
 
     try:
         worker.start()
@@ -36,7 +33,8 @@ def ms_to_readable_local(ms):
                 f"ts={getattr(state, 'ts_unix_ms', None)} "
                 f"ts_readable={ms_to_readable_local(getattr(state, 'ts_unix_ms', None))} "
                 f"gps_read_ts={getattr(state, 'gps_read_ts_unix_ms', None)} "
-                f"gps_read_ts_readable={ms_to_readable_local(getattr(state, 'gps_read_ts_unix_ms', None))}"
+                f"gps_read_ts_readable={ms_to_readable_local(getattr(state, 'gps_read_ts_unix_ms', None))} "
+                f"heading_deg={getattr(state, 'heading_deg', None)}"
             )
             time.sleep(2)
 
@@ -44,6 +42,13 @@ def ms_to_readable_local(ms):
         print("\nStopped by user.")
     finally:
         worker.close()
+
+
+def ms_to_readable_local(ms):
+    if ms is None:
+        return None
+    dt = datetime.fromtimestamp(ms / 1000)
+    return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 1000:03d} WIB"
 
 
 def run_mock_mode(args, publisher):
@@ -79,28 +84,17 @@ def run_mock_mode(args, publisher):
             )
 
             ok = publisher.send_location(state)
-
-            if ok :
-                 print(
-                f"mock_sent={ok} lat={state.lat} lng={state.lng} "
-                f"speed={state.speed_kmph} seq={state.seq} "
-                f"ts={state.ts_unix_ms} "
-                f"ts_readable={ms_to_readable_local(state.ts_unix_ms)} "
-                f"gps_read_ts={state.gps_read_ts_unix_ms} "
-                f"gps_read_ts_readable={ms_to_readable_local(state.gps_read_ts_unix_ms)}"
-            )
-                 
-                #  // check local storage 
-                #  // jika ada kirim dan clear
-                #  // jika tidak skip
-            else :
+            if ok:
                 print(
-                    f"error send location"
+                    f"mock_sent={ok} lat={state.lat} lng={state.lng} "
+                    f"speed={state.speed_kmph} seq={state.seq} "
+                    f"ts={state.ts_unix_ms} "
+                    f"ts_readable={ms_to_readable_local(state.ts_unix_ms)} "
+                    f"gps_read_ts={state.gps_read_ts_unix_ms} "
+                    f"gps_read_ts_readable={ms_to_readable_local(state.gps_read_ts_unix_ms)}"
                 )
-                
-            #  location kedalam 1 local storage dengan interval 1 menit
-
-           
+            else:
+                print("error send location")
 
             lat += args.mock_step_lat
             lng += args.mock_step_lng
@@ -118,6 +112,13 @@ def main():
     parser.add_argument("--ws-url", required=True)
     parser.add_argument("--poll-interval", type=float, default=0.2)
     parser.add_argument("--send-interval", type=float, default=2.0)
+
+    # Optional compass mode for real GPS test
+    parser.add_argument("--compass-enabled", action="store_true")
+    parser.add_argument("--compass-bus", type=int, default=1)
+    parser.add_argument("--compass-address", default="auto")
+    parser.add_argument("--compass-offset", type=float, default=0.0)
+    parser.add_argument("--compass-declination", type=float, default=0.0)
 
     # Mock mode
     parser.add_argument("--mock", action="store_true", help="Use mock GPS data instead of serial GPS")
@@ -141,13 +142,27 @@ def main():
         vehicle_id=args.vehicle_id,
         ws_url=args.ws_url,
     )
+    compass_service = None
 
     try:
         if args.mock:
             run_mock_mode(args, publisher)
         else:
-            run_real_mode(args, publisher)
+            if args.compass_enabled:
+                compass_service = CompassService(
+                    bus=args.compass_bus,
+                    address=args.compass_address,
+                    heading_offset_deg=args.compass_offset,
+                    declination_deg=args.compass_declination,
+                )
+                compass_service.connect()
+                if not getattr(compass_service, "connected", False):
+                    compass_service = None
+
+            run_real_mode(args, publisher, compass_service=compass_service)
     finally:
+        if compass_service is not None:
+            compass_service.close()
         publisher.close()
 
 
