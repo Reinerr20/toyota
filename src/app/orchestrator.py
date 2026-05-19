@@ -14,6 +14,9 @@ from src.app.detection_loop import DetectionLoop
 from src.gps.gps_worker import GPSWorker
 from src.gps.gps_publisher import GPSPublisher
 from src.compass.compass_service import CompassService
+from src.imu.imu_publisher import IMUPublisher
+from src.imu.imu_service import IMUService
+from src.imu.imu_worker import IMUWorker
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +107,70 @@ class DrowsinessSystem:
             )
         )
 
+        # Optional IMU/pothole telemetry config
+        self.imu_enabled = self._to_bool(
+            os.getenv("DS_IMU_ENABLED", sys_cfg.get("imu_enabled", False))
+        )
+        self.imu_bus = int(os.getenv("DS_IMU_BUS", sys_cfg.get("imu_bus", 1)))
+        self.imu_address = str(
+            os.getenv("DS_IMU_ADDRESS", sys_cfg.get("imu_address", "auto"))
+        )
+        self.imu_sample_hz = float(
+            os.getenv("DS_IMU_SAMPLE_HZ", sys_cfg.get("imu_sample_hz", 25.0))
+        )
+        self.imu_publish_enabled = self._to_bool(
+            os.getenv(
+                "DS_IMU_PUBLISH_ENABLED",
+                sys_cfg.get("imu_publish_enabled", False),
+            )
+        )
+        self.imu_post_url = os.getenv(
+            "DS_IMU_POST_URL",
+            sys_cfg.get("imu_post_url", "http://203.100.57.59:3000/api/v1/pothole/add"),
+        )
+        self.imu_vehicle_id = str(
+            os.getenv("DS_IMU_VEHICLE_ID", sys_cfg.get("imu_vehicle_id", "1210"))
+        )
+        self.imu_send_interval_sec = float(
+            os.getenv(
+                "DS_IMU_SEND_INTERVAL_SEC",
+                sys_cfg.get("imu_send_interval_sec", 1.0),
+            )
+        )
+        self.imu_timeout_sec = float(
+            os.getenv("DS_IMU_TIMEOUT_SEC", sys_cfg.get("imu_timeout_sec", 3.0))
+        )
+        self.imu_pothole_detection_enabled = self._to_bool(
+            os.getenv(
+                "DS_IMU_POTHOLE_DETECTION_ENABLED",
+                sys_cfg.get("imu_pothole_detection_enabled", False),
+            )
+        )
+        self.imu_min_speed_kmph = float(
+            os.getenv(
+                "DS_IMU_MIN_SPEED_KMPH",
+                sys_cfg.get("imu_min_speed_kmph", 5.0),
+            )
+        )
+        self.imu_accel_mag_threshold_g = float(
+            os.getenv(
+                "DS_IMU_ACCEL_MAG_THRESHOLD_G",
+                sys_cfg.get("imu_accel_mag_threshold_g", 1.8),
+            )
+        )
+        self.imu_jerk_mag_threshold_gps = float(
+            os.getenv(
+                "DS_IMU_JERK_MAG_THRESHOLD_GPS",
+                sys_cfg.get("imu_jerk_mag_threshold_gps", 8.0),
+            )
+        )
+        self.imu_event_cooldown_sec = float(
+            os.getenv(
+                "DS_IMU_EVENT_COOLDOWN_SEC",
+                sys_cfg.get("imu_event_cooldown_sec", 2.0),
+            )
+        )
+
         self.db = None
         self.repo = None
         self.user_manager = None
@@ -112,6 +179,9 @@ class DrowsinessSystem:
         self.gps_publisher = None
         self.gps_worker = None
         self.compass_service = None
+        self.imu_publisher = None
+        self.imu_service = None
+        self.imu_worker = None
         self.camera = None
 
     def run(self):
@@ -195,13 +265,79 @@ class DrowsinessSystem:
                 log.warning("GPS worker failed to initialize: %s", e, exc_info=True)
                 self.gps_worker = None
 
-        # 6. Hardware
+        # 6. IMU worker (optional / non-fatal)
+        log.info(
+            "IMU enabled=%s publish_enabled=%s pothole_detection_enabled=%s",
+            self.imu_enabled,
+            self.imu_publish_enabled,
+            self.imu_pothole_detection_enabled,
+        )
+        if self.imu_enabled:
+            try:
+                self.imu_service = IMUService(
+                    bus=self.imu_bus,
+                    address=self.imu_address,
+                )
+                self.imu_service.connect()
+                if self.imu_service.is_connected():
+                    log.info(
+                        "IMU detected (%s at %s)",
+                        self.imu_service.chip,
+                        self.imu_service._address_str(),
+                    )
+                    if self.imu_publish_enabled:
+                        self.imu_publisher = IMUPublisher(
+                            post_url=self.imu_post_url,
+                            vehicle_id=self.imu_vehicle_id,
+                            timeout_sec=self.imu_timeout_sec,
+                            enabled=True,
+                        )
+
+                    self.imu_worker = IMUWorker(
+                        imu_service=self.imu_service,
+                        publisher=self.imu_publisher,
+                        gps_provider=self.gps_worker.get_latest if self.gps_worker else None,
+                        sample_hz=self.imu_sample_hz,
+                        send_interval_sec=self.imu_send_interval_sec,
+                        publish_enabled=self.imu_publish_enabled,
+                        pothole_detection_enabled=self.imu_pothole_detection_enabled,
+                        min_speed_kmph=self.imu_min_speed_kmph,
+                        accel_mag_threshold_g=self.imu_accel_mag_threshold_g,
+                        jerk_mag_threshold_gps=self.imu_jerk_mag_threshold_gps,
+                        event_cooldown_sec=self.imu_event_cooldown_sec,
+                    )
+                    self.imu_worker.start()
+                else:
+                    log.warning("IMU not detected")
+                    self.imu_service = None
+            except Exception as e:
+                log.warning("IMU service failed to initialize: %s", e, exc_info=True)
+                if self.imu_publisher:
+                    self.imu_publisher.close()
+                if self.imu_service:
+                    self.imu_service.close()
+                self.imu_publisher = None
+                self.imu_service = None
+                self.imu_worker = None
+
+        # 7. Hardware
         self.camera = Camera(source="auto", resolution=(640, 480))
         if not self.camera.ready:
             raise RuntimeError("Camera failed to open")
 
     def _cleanup(self):
         log.info("Shutting down...")
+
+        if self.imu_worker:
+            self.imu_worker.close()
+            self.imu_worker = None
+            self.imu_publisher = None
+            self.imu_service = None
+        else:
+            if self.imu_publisher:
+                self.imu_publisher.close()
+            if self.imu_service:
+                self.imu_service.close()
 
         if self.gps_worker:
             self.gps_worker.close()

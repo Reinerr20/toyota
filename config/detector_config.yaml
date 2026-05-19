@@ -23,6 +23,21 @@ system:
   compass_declination_deg: 0.0
   compass_publish_enabled: true
 
+  imu_enabled: false
+  imu_bus: 1
+  imu_address: "auto"
+  imu_sample_hz: 25.0
+  imu_publish_enabled: false
+  imu_post_url: "http://203.100.57.59:3000/api/v1/pothole/add"
+  imu_vehicle_id: "1210"
+  imu_send_interval_sec: 1.0
+  imu_timeout_sec: 3.0
+  imu_pothole_detection_enabled: false
+  imu_min_speed_kmph: 5.0
+  imu_accel_mag_threshold_g: 1.8
+  imu_jerk_mag_threshold_gps: 8.0
+  imu_event_cooldown_sec: 2.0
+
 # Removed: user.swap_threshold (unused)
 # Removed: image.local_quality / image.remote_quality (not wired into SystemLogger)
 
