@@ -1,9 +1,10 @@
 import copy
+import json
 import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 from src.imu.imu_publisher import IMUPublisher
 from src.imu.imu_service import IMUService
@@ -31,6 +32,9 @@ class IMUWorker:
         accel_mag_threshold_g: float = 1.8,
         jerk_mag_threshold_gps: float = 8.0,
         event_cooldown_sec: float = 2.0,
+        compat_payload: bool = False,
+        mock_gps: Optional[dict] = None,
+        print_payload: bool = False,
     ):
         self.imu_service = imu_service
         self.publisher = publisher
@@ -43,6 +47,9 @@ class IMUWorker:
         self.accel_mag_threshold_g = float(accel_mag_threshold_g)
         self.jerk_mag_threshold_gps = float(jerk_mag_threshold_gps)
         self.event_cooldown_sec = float(event_cooldown_sec)
+        self.compat_payload = bool(compat_payload)
+        self.mock_gps = copy.deepcopy(mock_gps) if mock_gps else None
+        self.print_payload = bool(print_payload)
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -52,6 +59,13 @@ class IMUWorker:
         self._last_send_ts = 0.0
         self._last_event_ts = 0.0
         self._last_payload_sent = False
+        self._last_skip_log_ts = 0.0
+        self._baseline_started_ts: Optional[float] = None
+        self._baseline_samples = 0
+        self._baseline_sum_x = 0.0
+        self._baseline_sum_y = 0.0
+        self._baseline_sum_z = 0.0
+        self._accel_baseline_ms2: Optional[tuple] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -65,11 +79,12 @@ class IMUWorker:
         )
         self._thread.start()
         log.info(
-            "IMUWorker started (sample_hz=%s, send_interval=%s, publish_enabled=%s, pothole_detection_enabled=%s)",
+            "IMUWorker started (sample_hz=%s, send_interval=%s, publish_enabled=%s, pothole_detection_enabled=%s, compat_payload=%s)",
             self.sample_hz,
             self.send_interval_sec,
             self.publish_enabled,
             self.pothole_detection_enabled,
+            self.compat_payload,
         )
 
     def stop(self) -> None:
@@ -99,9 +114,12 @@ class IMUWorker:
     def build_payload(
         self,
         state: IMUState,
-        gps_state: Optional["GPSState"] = None,
+        gps_state: Optional[Union["GPSState", dict]] = None,
         candidate: Optional[PotholeCandidate] = None,
     ) -> dict:
+        if self.compat_payload:
+            return self.build_compat_payload(state, gps_state)
+
         candidate = candidate or PotholeCandidate(ts_unix_ms=state.ts_unix_ms)
         ts_sec = (state.ts_unix_ms or int(time.time() * 1000)) / 1000
 
@@ -111,11 +129,11 @@ class IMUWorker:
             "timestamp": datetime.fromtimestamp(ts_sec, tz=timezone.utc).isoformat(),
             "vehicle_id": self.publisher.vehicle_id if self.publisher else None,
             "gps": {
-                "lat": getattr(gps_state, "lat", None),
-                "lng": getattr(gps_state, "lng", None),
-                "speed_kmh": getattr(gps_state, "speed_kmph", None),
-                "satellites": getattr(gps_state, "satellites", None),
-                "hdop": getattr(gps_state, "hdop", None),
+                "lat": self._gps_value(gps_state, "lat", None),
+                "lng": self._gps_value(gps_state, "lng", None),
+                "speed_kmh": self._gps_value(gps_state, "speed_kmph", None),
+                "satellites": self._gps_value(gps_state, "satellites", None),
+                "hdop": self._gps_value(gps_state, "hdop", None),
             },
             "sensor": {
                 "accel_raw": {
@@ -151,6 +169,45 @@ class IMUWorker:
             },
         }
 
+    def build_compat_payload(
+        self,
+        state: IMUState,
+        gps_state: Optional[Union["GPSState", dict]] = None,
+    ) -> dict:
+        ts_sec = (state.ts_unix_ms or int(time.time() * 1000)) / 1000
+        linear_x, linear_y, linear_z = self._linear_accel_ms2(state)
+
+        return {
+            "timestamp": datetime.fromtimestamp(ts_sec).strftime("%Y-%m-%d %H:%M:%S"),
+            "gps": {
+                "lat": self._number(self._gps_value(gps_state, "lat", 0.0)),
+                "lng": self._number(self._gps_value(gps_state, "lng", 0.0)),
+                "speed_kmh": self._number(self._gps_value(gps_state, "speed_kmph", 0.0)),
+                "satellites": int(self._number(self._gps_value(gps_state, "satellites", 0))),
+            },
+            "sensor": {
+                "orient": {"heading": 0.0, "roll": 0.0, "pitch": 0.0},
+                "linear_accel": {
+                    "x": linear_x,
+                    "y": linear_y,
+                    "z": linear_z,
+                },
+                "gyro": {
+                    "x": self._number(state.gyro_x_dps),
+                    "y": self._number(state.gyro_y_dps),
+                    "z": self._number(state.gyro_z_dps),
+                },
+                "magneto": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "accel_raw": {
+                    "x": self._number(state.accel_x_g),
+                    "y": self._number(state.accel_y_g),
+                    "z": self._number(state.accel_z_g),
+                },
+                "gravity": {"x": 0.0, "y": 0.0, "z": 9.80665},
+                "temp_c": self._number(state.temp_c),
+            },
+        }
+
     def _run(self) -> None:
         sleep_sec = 1.0 / self.sample_hz
         while not self._stop_event.is_set():
@@ -158,7 +215,8 @@ class IMUWorker:
             try:
                 state = self.imu_service.read()
                 if state is not None:
-                    gps_state = self._get_gps_state()
+                    self._update_accel_baseline(state)
+                    gps_state = self._effective_gps_state(self._get_gps_state())
                     candidate = self._evaluate_pothole_candidate(state, gps_state)
 
                     with self._lock:
@@ -171,12 +229,20 @@ class IMUWorker:
                         and self.publish_enabled
                         and (now - self._last_send_ts) >= self.send_interval_sec
                     ):
+                        if self.compat_payload and not self._has_valid_lat_lng(gps_state):
+                            self._log_skip_post()
+                            with self._lock:
+                                self._last_payload_sent = False
+                            self._last_send_ts = now
+                            continue
+
                         payload = self.build_payload(state, gps_state, candidate)
+                        if self.print_payload:
+                            print(json.dumps(payload, separators=(",", ":")), flush=True)
                         sent = self.publisher.send_payload(payload)
                         with self._lock:
                             self._last_payload_sent = sent
-                        if sent:
-                            self._last_send_ts = now
+                        self._last_send_ts = now
             except Exception as e:
                 log.warning("IMUWorker loop error: %s", e, exc_info=True)
 
@@ -192,12 +258,22 @@ class IMUWorker:
             log.warning("IMU GPS provider failed: %s", e)
             return None
 
+    def _effective_gps_state(
+        self,
+        gps_state: Optional[Union["GPSState", dict]],
+    ) -> Optional[Union["GPSState", dict]]:
+        if self._has_valid_lat_lng(gps_state):
+            return gps_state
+        if self._has_valid_lat_lng(self.mock_gps):
+            return self.mock_gps
+        return gps_state
+
     def _evaluate_pothole_candidate(
         self,
         state: IMUState,
-        gps_state: Optional["GPSState"],
+        gps_state: Optional[Union["GPSState", dict]],
     ) -> PotholeCandidate:
-        speed = getattr(gps_state, "speed_kmph", None)
+        speed = self._gps_value(gps_state, "speed_kmph", None)
         now = time.time()
         candidate = PotholeCandidate(
             accel_mag_g=state.accel_mag_g,
@@ -212,6 +288,12 @@ class IMUWorker:
         if speed is None:
             candidate.reason = "speed_unavailable"
             return candidate
+        try:
+            speed = float(speed)
+        except Exception:
+            candidate.reason = "speed_unavailable"
+            return candidate
+        candidate.speed_kmph = speed
         if speed < self.min_speed_kmph:
             candidate.reason = "below_min_speed"
             return candidate
@@ -247,3 +329,73 @@ class IMUWorker:
         self._last_event_ts = now
         log.info("Pothole candidate detected: %s", candidate.to_dict())
         return candidate
+
+    def _update_accel_baseline(self, state: IMUState) -> None:
+        if self._accel_baseline_ms2 is not None:
+            return
+        if (
+            state.accel_x_ms2 is None
+            or state.accel_y_ms2 is None
+            or state.accel_z_ms2 is None
+        ):
+            return
+
+        now = time.time()
+        if self._baseline_started_ts is None:
+            self._baseline_started_ts = now
+
+        self._baseline_samples += 1
+        self._baseline_sum_x += float(state.accel_x_ms2)
+        self._baseline_sum_y += float(state.accel_y_ms2)
+        self._baseline_sum_z += float(state.accel_z_ms2)
+
+        if (now - self._baseline_started_ts) >= 1.0 or self._baseline_samples >= 25:
+            self._accel_baseline_ms2 = (
+                self._baseline_sum_x / self._baseline_samples,
+                self._baseline_sum_y / self._baseline_samples,
+                self._baseline_sum_z / self._baseline_samples,
+            )
+            log.info(
+                "IMU linear acceleration baseline set: x=%.3f y=%.3f z=%.3f",
+                self._accel_baseline_ms2[0],
+                self._accel_baseline_ms2[1],
+                self._accel_baseline_ms2[2],
+            )
+
+    def _linear_accel_ms2(self, state: IMUState) -> tuple:
+        if self._accel_baseline_ms2 is None:
+            return 0.0, 0.0, 0.0
+        return (
+            self._number(state.accel_x_ms2) - self._accel_baseline_ms2[0],
+            self._number(state.accel_y_ms2) - self._accel_baseline_ms2[1],
+            self._number(state.accel_z_ms2) - self._accel_baseline_ms2[2],
+        )
+
+    @staticmethod
+    def _gps_value(gps_state: Optional[Union["GPSState", dict]], key: str, default):
+        if gps_state is None:
+            return default
+        if isinstance(gps_state, dict):
+            return gps_state.get(key, default)
+        return getattr(gps_state, key, default)
+
+    @staticmethod
+    def _number(value, default: float = 0.0) -> float:
+        if value is None:
+            return float(default)
+        return float(value)
+
+    def _has_valid_lat_lng(self, gps_state: Optional[Union["GPSState", dict]]) -> bool:
+        lat = self._gps_value(gps_state, "lat", None)
+        lng = self._gps_value(gps_state, "lng", None)
+        try:
+            return lat is not None and lng is not None and float(lat) != 0.0 and float(lng) != 0.0
+        except Exception:
+            return False
+
+    def _log_skip_post(self) -> None:
+        now = time.time()
+        if (now - self._last_skip_log_ts) >= self.send_interval_sec:
+            log.warning("Skipping POST: GPS lat/lng required by backend.")
+            print("Skipping POST: GPS lat/lng required by backend.", flush=True)
+            self._last_skip_log_ts = now

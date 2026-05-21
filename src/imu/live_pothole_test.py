@@ -18,6 +18,14 @@ def _fmt(value, precision: int = 3) -> str:
     return str(value)
 
 
+def _gps_value(gps_state, key, default=None):
+    if gps_state is None:
+        return default
+    if isinstance(gps_state, dict):
+        return gps_state.get(key, default)
+    return getattr(gps_state, key, default)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Standalone IMU pothole telemetry test")
     parser.add_argument("--bus", type=int, default=1)
@@ -30,6 +38,12 @@ def main() -> None:
     parser.add_argument("--gps-port", default="/dev/ttyAMA0")
     parser.add_argument("--gps-baud", type=int, default=9600)
     parser.add_argument("--gps-enabled", action="store_true")
+    parser.add_argument("--compat-payload", action="store_true")
+    parser.add_argument("--print-payload", action="store_true")
+    parser.add_argument("--mock-gps-lat", type=float, default=None)
+    parser.add_argument("--mock-gps-lng", type=float, default=None)
+    parser.add_argument("--mock-gps-speed-kmh", type=float, default=0.0)
+    parser.add_argument("--mock-gps-satellites", type=int, default=0)
     parser.add_argument("--pothole-detection-enabled", action="store_true")
     parser.add_argument("--min-speed-kmph", type=float, default=5.0)
     parser.add_argument("--accel-mag-threshold-g", type=float, default=1.8)
@@ -39,6 +53,15 @@ def main() -> None:
 
     gps_worker = None
     imu_worker = None
+    mock_gps = None
+
+    if args.mock_gps_lat is not None and args.mock_gps_lng is not None:
+        mock_gps = {
+            "lat": args.mock_gps_lat,
+            "lng": args.mock_gps_lng,
+            "speed_kmph": args.mock_gps_speed_kmh,
+            "satellites": args.mock_gps_satellites,
+        }
 
     try:
         if args.gps_enabled:
@@ -74,6 +97,9 @@ def main() -> None:
             accel_mag_threshold_g=args.accel_mag_threshold_g,
             jerk_mag_threshold_gps=args.jerk_mag_threshold_gps,
             event_cooldown_sec=args.event_cooldown_sec,
+            compat_payload=args.compat_payload,
+            mock_gps=mock_gps,
+            print_payload=args.print_payload,
         )
         imu_worker.start()
 
@@ -82,6 +108,7 @@ def main() -> None:
             state = imu_worker.get_latest()
             candidate = imu_worker.get_latest_candidate()
             gps_state = gps_worker.get_latest() if gps_worker else None
+            effective_gps_state = imu_worker._effective_gps_state(gps_state)
             posted = imu_worker.get_last_payload_sent()
 
             if state is None:
@@ -89,11 +116,15 @@ def main() -> None:
                 continue
 
             gps_text = "disabled"
-            if gps_state is not None:
+            if effective_gps_state is not None:
+                gps_source = "mock" if isinstance(effective_gps_state, dict) else "real"
                 gps_text = (
-                    f"fix={gps_state.gps_fix} lat={_fmt(gps_state.lat, 6)} "
-                    f"lng={_fmt(gps_state.lng, 6)} speed_kmph={_fmt(gps_state.speed_kmph)} "
-                    f"sats={gps_state.satellites} hdop={_fmt(gps_state.hdop)}"
+                    f"source={gps_source} fix={getattr(effective_gps_state, 'gps_fix', None)} "
+                    f"lat={_fmt(_gps_value(effective_gps_state, 'lat'), 6)} "
+                    f"lng={_fmt(_gps_value(effective_gps_state, 'lng'), 6)} "
+                    f"speed_kmph={_fmt(_gps_value(effective_gps_state, 'speed_kmph'))} "
+                    f"sats={_gps_value(effective_gps_state, 'satellites')} "
+                    f"hdop={_fmt(_gps_value(effective_gps_state, 'hdop'))}"
                 )
 
             print(
