@@ -289,3 +289,5 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.sqlite
+# Local database backups
+backup_db/
