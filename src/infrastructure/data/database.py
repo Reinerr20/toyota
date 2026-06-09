@@ -130,7 +130,19 @@ class UnifiedDatabase:
                     cur.execute("ALTER TABLE events ADD COLUMN remote_attempts INTEGER DEFAULT 0")
                 if "remote_last_error" not in cols:
                     cur.execute("ALTER TABLE events ADD COLUMN remote_last_error TEXT NULL")
-                    conn.commit()
+                if "evidence_sent" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_sent INTEGER DEFAULT 0")
+                if "evidence_sent_at" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_sent_at TEXT NULL")
+                if "evidence_upload_failed" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_upload_failed INTEGER DEFAULT 0")
+                if "evidence_attempts" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_attempts INTEGER DEFAULT 0")
+                if "evidence_last_error" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_last_error TEXT NULL")
+                if "evidence_next_retry_at" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_next_retry_at TEXT NULL")
+                conn.commit()
             except Exception:
                 # Best-effort migration; logging is handled elsewhere in this file
                 pass
@@ -141,6 +153,7 @@ class UnifiedDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_category ON events(alert_category)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_remote_sent ON events(remote_sent, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_evidence_sync ON events(evidence_sent, evidence_attempts)")
 
             conn.commit()
 

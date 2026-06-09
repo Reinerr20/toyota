@@ -1,0 +1,53 @@
+app:
+  db_path: "data/cc.db"
+  log_dir: "logs"
+
+vehicle:
+  vin: "VIN-0001"
+  dashboard_vehicle_id: "1210"
+
+camera:
+  source: "auto"
+  index: "auto"
+
+identity:
+  mode: "enrollment"
+
+remote:
+  drowsiness_enabled: true
+  include_image: true
+  image_max_width: 480
+  image_jpeg_quality: 60
+  retry_event_only_on_413: true
+  evidence_retry_enabled: true
+  evidence_retry_interval_sec: 60
+  evidence_retry_backoff_sec: 300
+  evidence_retry_max_attempts: 10
+
+gps:
+  enabled: true
+  port: "/dev/ttyAMA0"
+  baud: 9600
+  publish_enabled: true
+  vehicle_id: "1210"
+  ws_url: "ws://203.100.57.59:3300/?vehicle_id=1210&device=GPS"
+
+compass:
+  enabled: true
+  bus: 1
+  address: "auto"
+  heading_offset_deg: 0
+  declination_deg: 0
+  publish_enabled: true
+
+imu:
+  enabled: true
+  bus: 1
+  address: "auto"
+  sample_hz: 25
+  publish_enabled: true
+  post_url: "http://203.100.57.59:3000/api/v1/pothole/add"
+  vehicle_id: "1210"
+  send_interval_sec: 1.0
+  pothole_detection_enabled: false
+  compat_payload: true

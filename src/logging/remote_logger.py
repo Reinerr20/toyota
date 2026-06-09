@@ -22,6 +22,9 @@ class _RemoteSendResult:
     success: bool
     status_code: int = 0
     error: str = ""
+    image_attempted: bool = False
+    image_sent: bool = False
+    image_error: str = ""
 
 class RemoteLogWorker:
     RETRY_INTERVAL_SEC = 30
@@ -30,14 +33,50 @@ class RemoteLogWorker:
     IMAGE_MAX_WIDTH = 480
     IMAGE_JPEG_QUALITY = 60
 
-    def __init__(self, db_path: str, remote_api_url: Optional[str] = None, enabled: bool = True, require_image: bool = False):
+    def __init__(
+        self,
+        db_path: str,
+        remote_api_url: Optional[str] = None,
+        enabled: bool = True,
+        require_image: bool = False,
+        include_image: Optional[bool] = None,
+        image_max_width: int = IMAGE_MAX_WIDTH,
+        image_jpeg_quality: int = IMAGE_JPEG_QUALITY,
+        retry_event_only_on_413: bool = True,
+        evidence_retry_enabled: bool = True,
+        evidence_retry_interval_sec: float = 60.0,
+        evidence_retry_backoff_sec: float = 300.0,
+        evidence_retry_max_attempts: int = 10,
+    ):
         """
         db_path: path to the MAIN DB (contains users + events).
         require_image: if True, do not send events without an image. For "events-only", keep False.
         """
         self.enabled = enabled
         self.require_image = require_image
-        self.include_image = self._env_bool("DS_REMOTE_INCLUDE_IMAGE", default=False)
+        self.include_image = self._env_bool(
+            "DS_REMOTE_INCLUDE_IMAGE",
+            default=True if include_image is None else bool(include_image),
+        )
+        self.IMAGE_MAX_WIDTH = int(os.getenv("DS_REMOTE_IMAGE_MAX_WIDTH", str(image_max_width)))
+        self.IMAGE_JPEG_QUALITY = int(os.getenv("DS_REMOTE_IMAGE_JPEG_QUALITY", str(image_jpeg_quality)))
+        self.retry_event_only_on_413 = self._env_bool(
+            "DS_REMOTE_RETRY_EVENT_ONLY_ON_413",
+            default=bool(retry_event_only_on_413),
+        )
+        self.evidence_retry_enabled = self._env_bool(
+            "DS_EVIDENCE_RETRY_ENABLED",
+            default=bool(evidence_retry_enabled),
+        )
+        self.evidence_retry_interval_sec = float(
+            os.getenv("DS_EVIDENCE_RETRY_INTERVAL_SEC", str(evidence_retry_interval_sec))
+        )
+        self.evidence_retry_backoff_sec = float(
+            os.getenv("DS_EVIDENCE_RETRY_BACKOFF_SEC", str(evidence_retry_backoff_sec))
+        )
+        self.evidence_retry_max_attempts = int(
+            os.getenv("DS_EVIDENCE_RETRY_MAX_ATTEMPTS", str(evidence_retry_max_attempts))
+        )
         self._db_lock = threading.Lock()
 
         target_base_url = remote_api_url if remote_api_url else config.SERVER_BASE_URL
@@ -54,19 +93,31 @@ class RemoteLogWorker:
         unsent_count = self._count_unsent_events()
         mode = "event+image" if self.include_image else "event-only"
         log.info("[REMOTE] include_image=%s (DS_REMOTE_INCLUDE_IMAGE=%s)", self.include_image, int(self.include_image))
+        log.info("[REMOTE] image_max_width=%d image_jpeg_quality=%d", self.IMAGE_MAX_WIDTH, self.IMAGE_JPEG_QUALITY)
         log.info("[REMOTE] Unsent events: %d", unsent_count)
         log.info("[REMOTE] Remote sync mode: %s, batch_size=%d, retry_interval=%ss", mode, self.SEND_BATCH_SIZE, self.RETRY_INTERVAL_SEC)
+        log.info(
+            "[EVIDENCE] retry_enabled=%s interval=%ss backoff=%ss max_attempts=%s",
+            self.evidence_retry_enabled,
+            self.evidence_retry_interval_sec,
+            self.evidence_retry_backoff_sec,
+            self.evidence_retry_max_attempts,
+        )
 
         self._immediate_q: "queue.Queue[tuple]" = queue.Queue(maxsize=200)
         self._stop_event = threading.Event()
 
         self._retry_thread = None
         self._send_thread = None
+        self._evidence_retry_thread = None
         if self.enabled and self.api_service:
             self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
             self._send_thread.start()
             self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
             self._retry_thread.start()
+            if self.evidence_retry_enabled:
+                self._evidence_retry_thread = threading.Thread(target=self._evidence_retry_loop, daemon=True)
+                self._evidence_retry_thread.start()
 
     @staticmethod
     def _env_bool(name: str, default: bool = False) -> bool:
@@ -93,6 +144,18 @@ class RemoteLogWorker:
                     cur.execute("ALTER TABLE events ADD COLUMN remote_attempts INTEGER DEFAULT 0")
                 if "remote_last_error" not in cols:
                     cur.execute("ALTER TABLE events ADD COLUMN remote_last_error TEXT NULL")
+                if "evidence_sent" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_sent INTEGER DEFAULT 0")
+                if "evidence_sent_at" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_sent_at TEXT NULL")
+                if "evidence_upload_failed" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_upload_failed INTEGER DEFAULT 0")
+                if "evidence_attempts" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_attempts INTEGER DEFAULT 0")
+                if "evidence_last_error" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_last_error TEXT NULL")
+                if "evidence_next_retry_at" not in cols:
+                    cur.execute("ALTER TABLE events ADD COLUMN evidence_next_retry_at TEXT NULL")
                 if "delivery_status" in cols:
                     cur.execute(
                         """
@@ -103,6 +166,7 @@ class RemoteLogWorker:
                         """
                     )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_events_remote_sent ON events(remote_sent, id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_events_evidence_sync ON events(evidence_sent, evidence_attempts)")
                 self.events_conn.commit()
         except Exception as e:
             log.error("[REMOTE] Failed to ensure remote columns: %s", e, exc_info=True)
@@ -218,7 +282,7 @@ class RemoteLogWorker:
             value=value,
             include_image=self.include_image,
         )
-        if result.status_code == 413 and attempted_with_image:
+        if result.status_code == 413 and attempted_with_image and self.retry_event_only_on_413:
             log.warning("[REMOTE] HTTP 413, retrying event-only")
             event_only_result = self._post_event(
                 vin,
@@ -233,6 +297,9 @@ class RemoteLogWorker:
                 value=value,
                 include_image=False,
             )
+            event_only_result.image_attempted = True
+            event_only_result.image_sent = False
+            event_only_result.image_error = "HTTP 413 Payload Too Large"
             if not event_only_result.success:
                 event_only_result.error = (
                     "HTTP 413 image payload too large; event-only retry failed: "
@@ -269,7 +336,11 @@ class RemoteLogWorker:
             norm_detail = (alert_detail.strip() if isinstance(alert_detail, str) else alert_detail)
             norm_sev = (severity.strip() if isinstance(severity, str) else severity)
 
+            image_attempted = bool(include_image and jpeg_bytes)
+            image_error = ""
             remote_jpeg = self._prepare_remote_image(jpeg_bytes) if include_image else None
+            if image_attempted and not remote_jpeg:
+                image_error = "image compression failed"
 
             # EVENTS-ONLY: allow sending without image
             if self.require_image and not remote_jpeg:
@@ -277,7 +348,12 @@ class RemoteLogWorker:
                     "[REMOTE] Skip send (missing image; require_image=True): vin=%s uid=%s status=%r time=%s",
                     vin, uid, norm_status, dt_obj.isoformat()
                 )
-                return _RemoteSendResult(False, error="missing image")
+                return _RemoteSendResult(
+                    False,
+                    error="missing image",
+                    image_attempted=image_attempted,
+                    image_error="missing image",
+                )
 
             b64 = None
             if remote_jpeg:
@@ -307,7 +383,13 @@ class RemoteLogWorker:
             res = self.api_service.send_drowsiness_event(event)
             if getattr(res, "success", False):
                 log.info("[REMOTE] ✓ Sent %s (CID: %s)", norm_cat or norm_status, getattr(res, "correlation_id", "-"))
-                return _RemoteSendResult(True, status_code=int(getattr(res, "status_code", 0) or 0))
+                return _RemoteSendResult(
+                    True,
+                    status_code=int(getattr(res, "status_code", 0) or 0),
+                    image_attempted=image_attempted,
+                    image_sent=bool(remote_jpeg),
+                    image_error="" if remote_jpeg or not image_attempted else image_error,
+                )
 
             log.warning(
                 "[REMOTE] Send failed: error=%r status_code=%r vin=%s uid=%s status=%r time=%s",
@@ -319,6 +401,9 @@ class RemoteLogWorker:
                 False,
                 status_code=int(getattr(res, "status_code", 0) or 0),
                 error=str(getattr(res, "error", "unknown error") or "unknown error"),
+                image_attempted=image_attempted,
+                image_sent=False,
+                image_error=str(getattr(res, "error", "unknown error") or "unknown error") if image_attempted else "",
             )
         except Exception as e:
             log.error("[REMOTE] Send exception: %s", e, exc_info=True)
@@ -385,7 +470,7 @@ class RemoteLogWorker:
         except Exception as e:
             log.error("[REMOTE] Queue error: %s", e, exc_info=True)
 
-    def _mark_remote_sent(self, event_id: Optional[int]) -> None:
+    def _mark_remote_sent(self, event_id: Optional[int], result: Optional[_RemoteSendResult] = None) -> None:
         if event_id is None or int(event_id) < 0:
             return
         try:
@@ -402,8 +487,64 @@ class RemoteLogWorker:
                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sent", int(event_id)),
                 )
                 self.events_conn.commit()
+            if result and result.image_sent:
+                self._mark_evidence_sent(event_id)
+            elif result and result.image_attempted and result.image_error:
+                self._mark_evidence_failed(event_id, result.image_error)
         except Exception as e:
             log.error("[REMOTE] Failed to mark event sent: event_id=%s error=%s", event_id, e, exc_info=True)
+
+    def _mark_evidence_sent(self, event_id: Optional[int]) -> None:
+        if event_id is None or int(event_id) < 0:
+            return
+        try:
+            with self._db_lock:
+                self.events_conn.execute(
+                    """
+                    UPDATE events
+                    SET evidence_sent = 1,
+                        evidence_sent_at = ?,
+                        evidence_upload_failed = 0,
+                        evidence_last_error = NULL,
+                        evidence_next_retry_at = NULL
+                    WHERE id = ?
+                    """,
+                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(event_id)),
+                )
+                self.events_conn.commit()
+            log.info("[EVIDENCE] sent event_id=%s", event_id)
+        except Exception as e:
+            log.error("[EVIDENCE] Failed to mark evidence sent: event_id=%s error=%s", event_id, e, exc_info=True)
+
+    def _mark_evidence_failed(self, event_id: Optional[int], error: str) -> int:
+        if event_id is None or int(event_id) < 0:
+            return 0
+        safe_error = (error or "evidence upload failed")[:500]
+        next_retry_at = datetime.fromtimestamp(time.time() + self.evidence_retry_backoff_sec).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with self._db_lock:
+                self.events_conn.execute(
+                    """
+                    UPDATE events
+                    SET evidence_sent = 0,
+                        evidence_upload_failed = 1,
+                        evidence_attempts = COALESCE(evidence_attempts, 0) + 1,
+                        evidence_last_error = ?,
+                        evidence_next_retry_at = ?
+                    WHERE id = ?
+                    """,
+                    (safe_error, next_retry_at, int(event_id)),
+                )
+                row = self.events_conn.execute(
+                    "SELECT COALESCE(evidence_attempts, 0) FROM events WHERE id = ?",
+                    (int(event_id),),
+                ).fetchone()
+                self.events_conn.commit()
+            log.warning("[EVIDENCE] failed event_id=%s error=%s", event_id, safe_error)
+            return int(row[0]) if row else 0
+        except Exception as e:
+            log.error("[EVIDENCE] Failed to mark evidence failed: event_id=%s error=%s", event_id, e, exc_info=True)
+            return 0
 
     def _mark_remote_failed(self, event_id: Optional[int], error: str) -> int:
         if event_id is None or int(event_id) < 0:
@@ -503,7 +644,11 @@ class RemoteLogWorker:
                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "sent", int(eid)),
                     )
                     self.events_conn.commit()
-                    log.info("[REMOTE] ✓ Sent event_id=%s", eid)
+                    log.info("[REMOTE] Sent event_id=%s", eid)
+                if result.image_sent:
+                    self._mark_evidence_sent(eid)
+                elif result.image_attempted and result.image_error:
+                    self._mark_evidence_failed(eid, result.image_error)
 
             else:
                 next_attempts = self._mark_remote_failed(eid, result.error or f"HTTP {result.status_code}")
@@ -550,7 +695,7 @@ class RemoteLogWorker:
                     value=value,
                 )
                 if result.success:
-                    self._mark_remote_sent(local_event_id)
+                    self._mark_remote_sent(local_event_id, result)
                 else:
                     attempts = self._mark_remote_failed(
                         local_event_id,
@@ -583,11 +728,73 @@ class RemoteLogWorker:
                     break
                 time.sleep(0.1)
 
+    def _process_evidence_retry(self) -> None:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._db_lock:
+            rows = self.events_conn.execute(
+                """
+                SELECT id, COALESCE(evidence_attempts, 0), evidence_last_error
+                FROM events
+                WHERE img_drowsiness IS NOT NULL
+                  AND COALESCE(remote_sent, 0) = 1
+                  AND COALESCE(evidence_sent, 0) = 0
+                  AND COALESCE(evidence_attempts, 0) < ?
+                  AND (
+                        evidence_next_retry_at IS NULL
+                        OR evidence_next_retry_at <= ?
+                  )
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (self.evidence_retry_max_attempts, now_str, self.SEND_BATCH_SIZE),
+            ).fetchall()
+
+        if not rows:
+            return
+
+        log.warning(
+            "[EVIDENCE] retry skipped: backend evidence endpoint not configured (pending=%d)",
+            len(rows),
+        )
+        next_retry_at = datetime.fromtimestamp(time.time() + self.evidence_retry_backoff_sec).strftime("%Y-%m-%d %H:%M:%S")
+        with self._db_lock:
+            for eid, _attempts, last_error in rows:
+                self.events_conn.execute(
+                    """
+                    UPDATE events
+                    SET evidence_upload_failed = 1,
+                        evidence_last_error = COALESCE(evidence_last_error, ?),
+                        evidence_next_retry_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        last_error or "backend evidence endpoint not configured",
+                        next_retry_at,
+                        int(eid),
+                    ),
+                )
+            self.events_conn.commit()
+
+    def _evidence_retry_loop(self) -> None:
+        """Periodically process image evidence retries outside the detection loop."""
+        while not self._stop_event.is_set():
+            try:
+                self._process_evidence_retry()
+            except Exception as e:
+                log.error("[EVIDENCE] Retry loop error: %s", e, exc_info=True)
+
+            for _ in range(int(self.evidence_retry_interval_sec * 10)):
+                if self._stop_event.is_set():
+                    break
+                time.sleep(0.1)
+
     def close(self):
         self._stop_event.set()
         if self._send_thread:
             self._send_thread.join()
         if self._retry_thread:
             self._retry_thread.join()
+        if self._evidence_retry_thread:
+            self._evidence_retry_thread.join()
         self.events_conn.close()
         log.info("[REMOTE] Worker stopped")

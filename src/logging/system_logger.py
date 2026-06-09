@@ -52,6 +52,7 @@ class SystemLogger:
 
         if frame is not None:
             jpeg_local = self._encode_jpeg(frame, self.local_quality)
+            logging.info("[EVENT] local_image_capture=%s", bool(jpeg_local))
 
             if remote_allowed:
                 h, w = frame.shape[:2]
@@ -63,6 +64,8 @@ class SystemLogger:
                 else:
                     resized = frame
                 jpeg_remote = self._encode_jpeg(resized, self.remote_quality)
+        else:
+            logging.warning("[EVENT] local evidence skipped: frame unavailable")
 
         local_rowid = None
 
@@ -83,6 +86,8 @@ class SystemLogger:
                     severity=severity,
                 )
                 local_rowid = self.repo.add_event(event)
+                if jpeg_local:
+                    logging.info("[EVENT] saved local evidence bytes=%d", len(jpeg_local))
             except Exception as e:
                 logging.error("Failed to save event to database: %s", e, exc_info=True)
 
