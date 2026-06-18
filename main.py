@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-import platform
 
 # 1. CONFIGURATION (Before imports to ensure they take effect)
 # -----------------------------------------------------------
@@ -9,11 +8,9 @@ import platform
 os.environ["ORT_LOGGING_LEVEL"] = "3"           # Silence ONNX Runtime
 os.environ["LIBCAMERA_LOG_LEVELS"] = "ERROR"    # Silence LibCamera
 
-# Auto-detect hardware for camera source
-if platform.machine().startswith(("arm", "aarch")):
-    os.environ.setdefault("DS_CAMERA_SOURCE", "picamera2")  # Raspberry Pi
-else:
-    os.environ.setdefault("DS_CAMERA_SOURCE", "opencv")     # Laptop/PC
+# Default to USB/OpenCV camera. Override with DS_CAMERA_SOURCE=picamera2
+# when using the Raspberry Pi camera module.
+os.environ.setdefault("DS_CAMERA_SOURCE", "opencv")
 
 # 2. GLOBAL LOGGING SETUP
 # -----------------------------------------------------------

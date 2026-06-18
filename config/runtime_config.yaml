@@ -7,7 +7,7 @@ vehicle:
   dashboard_vehicle_id: "1210"
 
 camera:
-  source: "auto"
+  source: "opencv"
   index: "auto"
 
 identity:
