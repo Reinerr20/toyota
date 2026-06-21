@@ -47,7 +47,7 @@ class DrowsinessSystem:
             "1210",
         )
         self.fps = float(sys_cfg.get("target_fps", 30.0))
-        self.camera_source = self.runtime.get_str("camera.source", "auto", env="DS_CAMERA_SOURCE")
+        self.camera_source = self.runtime.get_str("camera.source", "opencv", env="DS_CAMERA_SOURCE")
         self.camera_index = self.runtime.get_str("camera.index", "auto", env="DS_CAMERA_INDEX")
         self.identity_mode = self.runtime.get_str("identity.mode", "enrollment", env="DS_IDENTITY_MODE").strip().lower()
         if self.identity_mode not in {"operation", "enrollment"}:
@@ -106,11 +106,11 @@ class DrowsinessSystem:
         self.compass_publish_enabled = self.runtime.get_bool("compass.publish_enabled", True, env="DS_COMPASS_PUBLISH_ENABLED")
 
         # Optional IMU/pothole telemetry config
-        self.imu_enabled = self.runtime.get_bool("imu.enabled", True, env="DS_IMU_ENABLED")
+        self.imu_enabled = self.runtime.get_bool("imu.enabled", False, env="DS_IMU_ENABLED")
         self.imu_bus = self.runtime.get_int("imu.bus", 1, env="DS_IMU_BUS")
         self.imu_address = self.runtime.get_str("imu.address", "auto", env="DS_IMU_ADDRESS")
         self.imu_sample_hz = self.runtime.get_float("imu.sample_hz", 25.0, env="DS_IMU_SAMPLE_HZ")
-        self.imu_publish_enabled = self.runtime.get_bool("imu.publish_enabled", True, env="DS_IMU_PUBLISH_ENABLED")
+        self.imu_publish_enabled = self.runtime.get_bool("imu.publish_enabled", False, env="DS_IMU_PUBLISH_ENABLED")
         self.imu_post_url = self.runtime.get_str(
             "imu.post_url",
             "http://203.100.57.59:3000/api/v1/pothole/add",

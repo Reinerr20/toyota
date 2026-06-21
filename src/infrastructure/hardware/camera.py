@@ -2,8 +2,8 @@
 Unified camera interface for Picamera2 or OpenCV webcam.
 
 Environment variables:
-- DS_CAMERA_SOURCE: picamera2 | opencv | auto (default: auto)
-- DS_CAMERA_INDEX: device index for OpenCV (default: 0)
+- DS_CAMERA_SOURCE: picamera2 | opencv | auto (default: opencv in the app)
+- DS_CAMERA_INDEX: device index for OpenCV (default: auto in the app)
 - DS_CAMERA_RES: resolution like 640x480 (default: 640x480)
 """
 import os

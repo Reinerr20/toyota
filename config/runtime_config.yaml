@@ -41,11 +41,11 @@ compass:
   publish_enabled: true
 
 imu:
-  enabled: true
+  enabled: false
   bus: 1
   address: "auto"
   sample_hz: 25
-  publish_enabled: true
+  publish_enabled: false
   post_url: "http://203.100.57.59:3000/api/v1/pothole/add"
   vehicle_id: "1210"
   send_interval_sec: 1.0
