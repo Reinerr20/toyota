@@ -8,6 +8,24 @@ There is no committed dependency manifest. The commands below reproduce the dire
 
 ## Install the software dependencies
 
+### One-command Raspberry Pi installation
+
+From the repository root on Raspberry Pi OS, paste this entire command into the terminal. It installs the operating-system packages, creates `.venv`, installs all application libraries, and performs core plus Raspberry Pi-specific import checks:
+
+```sh
+sudo apt update && sudo apt install -y python3-venv python3-pip python3-dev python3-picamera2 python3-gpiozero libgl1 libglib2.0-0 libcap-dev i2c-tools && python3 -m venv --system-site-packages .venv && . .venv/bin/activate && python -m pip install --upgrade pip && python -m pip install numpy==1.26.4 opencv-contrib-python==4.11.0.86 PyYAML==6.0.3 mediapipe==0.10.21 torch==2.2.2 torchvision==0.17.2 facenet-pytorch==2.6.0 Pillow==10.2.0 requests==2.32.5 websocket-client==1.9.0 pyserial==3.5 pynmea2==1.19.0 smbus2==0.6.1 && python -c "import cv2, numpy, yaml, mediapipe, torch, torchvision, facenet_pytorch, PIL, requests, websocket, serial, pynmea2, gpiozero, picamera2, smbus2; print('All Fleet DMS dependencies imported successfully')"
+```
+
+Use `sudo` only for the Raspberry Pi OS packages. The Python packages are deliberately installed inside `.venv` without `sudo`. Every `&&` means the command stops immediately if the preceding installation step fails.
+
+After opening a new terminal later, reactivate the installed environment with:
+
+```sh
+. .venv/bin/activate
+```
+
+This command is based on the repository imports and the inspected Python package versions. As noted below, the MediaPipe and PyTorch versions still require confirmation on the exact Raspberry Pi model, OS release, CPU architecture, and Python version.
+
 ### Windows or Linux development environment
 
 This copy-paste block creates a virtual environment and installs all direct third-party packages imported by the current application. It uses one OpenCV distribution (`opencv-contrib-python`) to avoid installing two packages that both provide `cv2`.
