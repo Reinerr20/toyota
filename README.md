@@ -1,97 +1,70 @@
-# drowsiness_detection
+# Fleet Driver Monitoring System
 
-## Runtime
+An edge application that uses a cabin camera to detect driver drowsiness and distraction, issue a local buzzer alert, store event evidence, and optionally publish data to external services.
 
-Default field-trial startup uses the USB webcam through OpenCV and does not
-start IMU/pothole telemetry:
+> **Prototype status:** This repository is a **limited field-validation prototype** for one TMMIN HiAce Commuter. It is not a production-ready, certified, or fully validated safety system. It must not replace attentive driving or established fleet safety procedures.
+
+## System overview
+
+| Status | Capability |
+| --- | --- |
+| **Current / Implemented** | OpenCV or Picamera2 input; face/hand/head-pose processing; drowsiness and distraction rules; GPIO buzzer wrapper; local SQLite users and events; enrollment and identity-agnostic operation modes; event image evidence; asynchronous HTTP event upload with persistent retry state. |
+| **Under Validation / Improvement** | Raspberry Pi and vehicle installation; driver identification consistency; detector behavior across drivers and conditions; GPS/compass capture and WebSocket publishing; remote event/evidence synchronization; connectivity recovery; long-duration operation; optional IMU/pothole telemetry. |
+| **Planned / Future** | Driver Behaviour Monitoring analytics and an independently survivable Emergency Response System. These are designs, not current capabilities. |
+
+The implemented high-level flow is:
+
+`Cabin camera -> edge processing -> local buzzer -> SQLite event/evidence -> optional HTTP upload`
+
+GPS/compass data follows a separate optional WebSocket path. The code does not currently attach GPS coordinates to DMS event records. The dashboard and backend are external; their source is not present here.
+
+## Repository map
+
+- `main.py` — application entry point.
+- `src/app/` — startup orchestration and detection loop.
+- `src/status/` and `src/mediapipe/` — detection rules and vision processing.
+- `src/infrastructure/` — camera, buzzer, SQLite schema, and repositories.
+- `src/logging/` and `src/api_client/` — local event logging and remote delivery.
+- `src/gps/`, `src/compass/`, and `src/imu/` — optional sensor integrations.
+- `config/` — runtime and detector configuration.
+- `docs/` — detailed project and operational documentation.
+
+## Prerequisites
+
+- Python. The only inspected local environment uses Python 3.12.4; no supported version range is declared.
+- A camera supported by OpenCV or Picamera2.
+- Platform-specific hardware and packages for GPS, compass, IMU, or GPIO features when enabled.
+
+The repository has no `requirements.txt`, `pyproject.toml`, or other reproducible dependency manifest. See [Setup and Run](docs/SETUP_AND_RUN.md) before creating a new environment.
+
+## Quick start
+
+From the repository root, using an environment whose dependencies are already installed:
 
 ```sh
 python main.py
 ```
 
-Runtime/device/server defaults live in `config/runtime_config.yaml`. Existing
-environment variables still override that file, for example:
+For a local camera-only check that avoids sensor connections and remote DMS uploads:
 
 ```sh
-DS_IDENTITY_MODE=operation python main.py
-DS_REMOTE_INCLUDE_IMAGE=0 python main.py
-DS_IMU_ENABLED=1 DS_IMU_PUBLISH_ENABLED=1 python main.py
+DS_GPS_ENABLED=0 DS_COMPASS_ENABLED=0 DS_IMU_ENABLED=0 DS_REMOTE_ENABLED=0 DS_BUZZER_DISABLED=1 python main.py
 ```
 
-## Raspberry Pi Commands
+On PowerShell, set the variables separately with `$env:NAME = "value"`. The application is working when startup logs show the configuration summary and `System Ready`, then camera frames are processed. Press `q` in the application window to stop; use `Ctrl+C` in headless mode.
 
-From the project folder:
+See [Setup and Run](docs/SETUP_AND_RUN.md) for the full procedure and limitations.
 
-```sh
-cd ~/Downloads/dd_2025
-source venv/bin/activate
-python main.py
-```
+## Documentation
 
-Headless/service-style manual run:
+- [Project Context](docs/PROJECT_CONTEXT.md)
+- [Setup and Run](docs/SETUP_AND_RUN.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Architecture and Data Flow](docs/ARCHITECTURE_AND_DATA_FLOW.md)
+- [Validation and Known Issues](docs/VALIDATION_AND_KNOWN_ISSUES.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Future Development](docs/FUTURE_DEVELOPMENT.md)
 
-```sh
-DS_HEADLESS=1 python main.py
-```
+## Safety and privacy
 
-Force USB webcam index 0:
-
-```sh
-DS_CAMERA_SOURCE=opencv DS_CAMERA_INDEX=0 python main.py
-```
-
-Use a Raspberry Pi camera module instead of USB:
-
-```sh
-DS_CAMERA_SOURCE=picamera2 python main.py
-```
-
-Quick hardware checks:
-
-```sh
-python -m src.infrastructure.hardware.camera
-python -m src.gps.standalone_test --port /dev/ttyAMA0 --baud 9600
-python -m src.compass.standalone_test
-python -m src.imu.standalone_test
-```
-
-Common systemd commands:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl start dd.service
-sudo systemctl stop dd.service
-sudo systemctl restart dd.service
-sudo systemctl status dd.service
-journalctl -u dd.service -f
-sudo systemctl enable dd.service
-sudo systemctl disable dd.service
-```
-
-## Evidence Check
-
-Use this SQLite query to verify local image evidence and remote sync state:
-
-```sh
-sqlite3 data/cc.db "
-SELECT
-id,
-time,
-status,
-user_id,
-LENGTH(img_drowsiness) AS img_bytes,
-remote_sent,
-remote_attempts,
-remote_last_error,
-evidence_sent,
-evidence_attempts,
-evidence_last_error
-FROM events
-ORDER BY id DESC
-LIMIT 20;
-"
-```
-
-`img_bytes > 0` means local evidence capture is working. `remote_sent = 1`
-means event metadata reached the backend. `evidence_sent = 1` means remote
-image evidence reached the backend.
+This application can store face encodings and cabin images in a local SQLite database and can transmit event images when remote upload is enabled. Obtain appropriate consent, restrict database and network access, define retention rules, and use a secure deployment endpoint before field use. The endpoints committed in configuration are development defaults, not credentials or proof of a supported production service.
