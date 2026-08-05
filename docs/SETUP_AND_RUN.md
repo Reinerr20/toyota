@@ -4,7 +4,80 @@
 
 The application is Python-based and contains Linux/Raspberry Pi hardware paths. The inspected developer virtual environment uses Python 3.12.4 on Windows, but that environment is untracked and is not a declared compatibility guarantee. Raspberry Pi is the intended hardware target inferred from Picamera2, GPIO, I2C, serial-device, and systemd references.
 
-There is no committed dependency manifest. A reproducible clean installation cannot be derived safely from this repository alone. The imports require at least OpenCV, NumPy, PyYAML, MediaPipe, face-recognition model dependencies, Requests, websocket-client, pyserial/pynmea2, and—in relevant hardware modes—gpiozero, Picamera2, and smbus2. Obtain an approved dependency manifest from the project owner instead of copying versions from another machine.
+There is no committed dependency manifest. The commands below reproduce the direct Python packages found in the inspected Python 3.12.4 developer environment; they are a documented bootstrap reference, not a supported-version guarantee. Raspberry Pi, Picamera2, MediaPipe, and PyTorch wheel availability varies by OS, CPU architecture, and Python version.
+
+## Install the software dependencies
+
+### Windows or Linux development environment
+
+This copy-paste block creates a virtual environment and installs all direct third-party packages imported by the current application. It uses one OpenCV distribution (`opencv-contrib-python`) to avoid installing two packages that both provide `cv2`.
+
+PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install numpy==1.26.4 opencv-contrib-python==4.11.0.86 PyYAML==6.0.3 mediapipe==0.10.21 torch==2.2.2 torchvision==0.17.2 facenet-pytorch==2.6.0 Pillow==10.2.0 requests==2.32.5 websocket-client==1.9.0 pyserial==3.5 pynmea2==1.19.0 gpiozero==2.0.1
+```
+
+POSIX shell:
+
+```sh
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install numpy==1.26.4 opencv-contrib-python==4.11.0.86 PyYAML==6.0.3 mediapipe==0.10.21 torch==2.2.2 torchvision==0.17.2 facenet-pytorch==2.6.0 Pillow==10.2.0 requests==2.32.5 websocket-client==1.9.0 pyserial==3.5 pynmea2==1.19.0 gpiozero==2.0.1 smbus2==0.6.1
+```
+
+Package roles:
+
+| Package | Used for |
+| --- | --- |
+| `numpy`, `opencv-contrib-python` | Frames, image operations, JPEG evidence, and UI |
+| `PyYAML` | Runtime and detector configuration |
+| `mediapipe` | Face mesh and hand landmarks |
+| `torch`, `torchvision`, `facenet-pytorch`, `Pillow` | MTCNN face detection and FaceNet identity embeddings |
+| `requests` | DMS and optional IMU HTTP publishing |
+| `websocket-client` | GPS dashboard publishing |
+| `pyserial`, `pynmea2` | Serial GPS and NMEA parsing |
+| `gpiozero` | Raspberry Pi buzzer GPIO |
+| `smbus2` | I2C compass and IMU access |
+
+The first use of `InceptionResnetV1(pretrained="vggface2")` may need network access to download pretrained weights into the local PyTorch cache. For an offline vehicle, initialize the model once in an approved connected environment and provision the resulting cache according to the project's artifact policy.
+
+### Raspberry Pi OS additions
+
+Install operating-system support before the Python packages:
+
+```sh
+sudo apt update
+sudo apt install -y python3-venv python3-pip python3-dev python3-picamera2 python3-gpiozero libgl1 libglib2.0-0 libcap-dev i2c-tools
+python3 -m venv --system-site-packages .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install numpy==1.26.4 opencv-contrib-python==4.11.0.86 PyYAML==6.0.3 mediapipe==0.10.21 torch==2.2.2 torchvision==0.17.2 facenet-pytorch==2.6.0 Pillow==10.2.0 requests==2.32.5 websocket-client==1.9.0 pyserial==3.5 pynmea2==1.19.0 smbus2==0.6.1
+```
+
+`--system-site-packages` makes the Raspberry Pi OS Picamera2 and gpiozero packages visible inside the virtual environment. Do not install Picamera2 from an arbitrary PyPI package in place of the Raspberry Pi OS package.
+
+The final pip command is verified against the inspected Windows environment, not on Raspberry Pi hardware. If pip reports that MediaPipe, Torch, or Torchvision has no compatible distribution, stop and record the Pi model, OS release, CPU architecture, Python version, and error. Do not silently substitute unrelated versions; the project owner must approve and validate an architecture-compatible dependency set.
+
+### Confirm the installation
+
+Run this core import check before connecting hardware or enabling network publishers:
+
+```sh
+python -c "import cv2, numpy, yaml, mediapipe, torch, torchvision, facenet_pytorch, PIL, requests, websocket, serial, pynmea2, gpiozero; print('Core application dependencies imported successfully')"
+```
+
+On Raspberry Pi, also verify the OS-provided camera package and Linux-only I2C package:
+
+```sh
+python -c "import picamera2, smbus2; print('Raspberry Pi camera and I2C dependencies imported successfully')"
+```
+
+`smbus2` is intentionally excluded from the Windows command because it imports the Linux-only `fcntl` interface. This does not affect a Windows camera-only run while compass and IMU features are disabled.
 
 ## Hardware prerequisites
 
@@ -19,8 +92,8 @@ Do not perform vehicle or hardware validation without an approved wiring plan, i
 ## Prepare configuration
 
 1. Clone or copy the repository and enter its root (the directory containing `main.py`).
-2. Create and activate a virtual environment using the project-approved Python version.
-3. Install the project-approved dependencies. This step is currently blocked by the missing dependency manifest.
+2. Create and activate the appropriate virtual environment using the installation block above.
+3. Run the dependency import check. Record any platform-specific substitution needed for Raspberry Pi review.
 4. Review `config/runtime_config.yaml` and `config/detector_config.yaml`.
 5. Replace vehicle identifiers and development network endpoints for the intended controlled environment. Do not commit secrets or production credentials.
 6. For the first local check, disable all external and hardware-dependent optional services.
